@@ -138,14 +138,18 @@ void BuildDatabase::createClangCompileCommandsJson(const fs::path &buildCommands
                     std::initializer_list<std::string>{ targetObjectInfo->command.getCompiler(),
                                                         "-o", outputFile, tmpObjectFileName },
                     directory);
-                targetInfo->addFile(tmpObjectFileName);
+                if (!isInstalledFile(tmpObjectFileName)) {
+                    targetInfo->addFile(tmpObjectFileName);
+                }
             }
             //redirect new compilation command to temporary file
             auto tmpObjectFileName = createExplicitObjectFileCompilationCommand(objectInfo);
 
             //add new dependency to an implicit target
             targetInfo->commands[0].addFlagToEnd(tmpObjectFileName);
-            targetInfo->addFile(tmpObjectFileName);
+            if (!isInstalledFile(tmpObjectFileName)) {
+                targetInfo->addFile(tmpObjectFileName);
+            }
         } else {
             objectFileInfos[outputFile] = objectInfo;
         }
@@ -197,7 +201,9 @@ void BuildDatabase::initInfo(const nlohmann::json &linkCommandsJson) {
         for (nlohmann::json const &jsonFile : linkCommand.at("files")) {
             auto filename = jsonFile.get<std::string>();
             fs::path currentFile = Paths::getCCJsonFileFullPath(filename, command.getDirectory());
-            targetInfo->addFile(currentFile);
+            if (!isInstalledFile(currentFile)) {
+                targetInfo->addFile(currentFile);
+            }
             if (Paths::isObjectFile(currentFile)) {
                 if (!CollectionUtils::containsKey(objectFileInfos, currentFile)) {
                     throw CompilationDatabaseException("compile_commands.json doesn't contain a command for object file "
@@ -222,11 +228,11 @@ void BuildDatabase::mergeLibraryOptions(std::vector<std::string> &jsonArguments)
 }
 
 namespace {
-    CollectionUtils::OrderedFileSet collectLibraryDirs(const utbot::BaseCommand *command) {
+    CollectionUtils::OrderedFileSet collectLibraryDirs(const utbot::BaseCommand &command) {
         using namespace DynamicLibraryUtils;
         CollectionUtils::OrderedFileSet libraryDirs;
-        for (string const &argument : command->getCommandLine()) {
-            auto optionalLibraryPath = getLibraryAbsolutePath(argument, command->getDirectory());
+        for (string const &argument : command.getCommandLine()) {
+            auto optionalLibraryPath = getLibraryAbsolutePath(argument, command.getDirectory());
             if (optionalLibraryPath.has_value()) {
                 libraryDirs.insert(optionalLibraryPath.value());
             }
@@ -248,13 +254,13 @@ namespace {
         return libraryDirs;
     }
 
-    CollectionUtils::MapFileTo<string> collectLibraryNames(const utbot::BaseCommand *command) {
+    CollectionUtils::MapFileTo<string> collectLibraryNames(const utbot::BaseCommand &command) {
         using namespace DynamicLibraryUtils;
 
         CollectionUtils::MapFileTo<string> libraryNames;
 
-        for (const auto &argument : command->getCommandLine()) {
-            if (Paths::isSharedLibraryFile(argument) && argument != command->getOutput() &&
+        for (const auto &argument : command.getCommandLine()) {
+            if (Paths::isSharedLibraryFile(argument) && argument != command.getOutput() &&
                 !StringUtils::startsWith(argument, libraryDirOptionWl)) {
                 libraryNames.emplace(argument, argument);
             }
@@ -270,12 +276,11 @@ namespace {
     }
 }
 
-template <typename Info>
-void BuildDatabase::addLibrariesForCommand(utbot::BaseCommand *command,
-                            const std::shared_ptr<Info> &info,
-                            sharedLibrariesMap &sharedLibraryFiles,
-                            bool objectFiles) {
-    if (command->isArchiveCommand()) {
+void BuildDatabase::addLibrariesForCommand(utbot::BaseCommand &command,
+                                           BaseFileInfo &info,
+                                           sharedLibrariesMap &sharedLibraryFiles,
+                                           bool objectFiles) {
+    if (command.isArchiveCommand()) {
         return;
     }
     auto libraryDirs = collectLibraryDirs(command);
@@ -290,14 +295,17 @@ void BuildDatabase::addLibrariesForCommand(utbot::BaseCommand *command,
                 }
             }
             fs::path fullPath = Paths::getCCJsonFileFullPath(name, libraryDir);
-            if (CollectionUtils::containsKey(targetInfos, fullPath)) {
-                info->addFile(fullPath);
-                LOG_IF_S(WARNING, objectFiles) << "Object file " << command->getOutput() << " has library dependencies: " << fullPath;
+            if (!isInstalledFile(fullPath)) {
+                info.addFile(fullPath);
+                LOG_IF_S(WARNING, objectFiles) << "Object file " << command.getOutput()
+                                               << " has library dependencies: " << fullPath;
                 argumentToFile[argument] = fullPath;
+            } else {
+                info.installedFiles.insert(fullPath);
             }
         }
     }
-    for (auto &argument : command->getCommandLine()) {
+    for (auto &argument : command.getCommandLine()) {
         if (CollectionUtils::containsKey(argumentToFile, argument)) {
             argument = argumentToFile[argument];
         }
@@ -314,11 +322,11 @@ void BuildDatabase::addLocalSharedLibraries() {
     }
     for (auto &[linkFile, targetInfo] : targetInfos) {
         for (auto &command : targetInfo->commands) {
-            addLibrariesForCommand(static_cast<utbot::BaseCommand*>(&command), targetInfo, sharedLibraryFiles);
+            addLibrariesForCommand(command, *targetInfo, sharedLibraryFiles);
         }
     }
     for (auto &[objectFile, objectInfo] : objectFileInfos) {
-        addLibrariesForCommand(static_cast<utbot::BaseCommand*>(&objectInfo->command), objectInfo, sharedLibraryFiles, true);
+        addLibrariesForCommand(objectInfo->command, *objectInfo, sharedLibraryFiles, true);
     }
 }
 
@@ -664,4 +672,8 @@ fs::path BuildDatabase::newDirForFile(const fs::path &file) const {
     fs::path base = Paths::longestCommonPrefixPath(this->projectContext.buildDir,
                                                    this->projectContext.projectPath);
     return Paths::createNewDirForFile(file, base, this->serverBuildDir);
+}
+bool BuildDatabase::isInstalledFile(const fs::path &file) {
+    return !Paths::isSubPathOf(projectContext.projectPath, file) &&
+           !Paths::isSubPathOf(projectContext.buildDir, file);
 }
