@@ -53,8 +53,9 @@ void ClangToolRunner::run(const fs::path &file,
     }
     if (onlySource) {
         if (!CollectionUtils::contains(compilationDatabase->getAllFiles(), file)) {
-            throw CompilationDatabaseException(
-                "compile_commands.json doesn't contain a command for source file " + file.string());
+            std::string message = "compile_commands.json doesn't contain a command for source file " + file.string();
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
     }
     auto clangTool = std::make_unique<clang::tooling::ClangTool>(
@@ -107,5 +108,18 @@ void ClangToolRunner::setResourceDirOption(clang::tooling::ClangTool *clangTool)
             resourceDirFlag.c_str(), clang::tooling::ArgumentInsertPosition::END);
         // Add "-v" to the list in order to see search list for include files
         clangTool->appendArgumentsAdjuster(resourceDirAdjuster);
+    }
+}
+
+types::AccessSpecifier getAcessSpecifier(const clang::Decl *D) {
+    switch (D->getAccess()) {
+        case clang::AS_private :
+            return types::AS_private;
+        case clang::AS_protected :
+            return types::AS_protected;
+        case clang::AS_public :
+            return types::AS_pubic;
+        case clang::AS_none :
+            return types::AS_none;
     }
 }

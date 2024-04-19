@@ -32,6 +32,7 @@
 #include "utils/stats/TestsGenerationStats.h"
 #include "utils/stats/TestsExecutionStats.h"
 #include "utils/TypeUtils.h"
+#include "utils/JsonUtils.h"
 #include "building/ProjectBuildDatabase.h"
 
 #include <thread>
@@ -203,16 +204,13 @@ Status Server::TestsGenServiceImpl::ProcessBaseTestRequest(BaseTestGen &testGen,
                         &sizeContext.maximumAlignment,
                         testGen.compileCommandsJsonPath, false);
         fetcher.fetchWithProgress(testGen.progressWriter, logMessage);
-        SourceToHeaderRewriter(testGen.projectContext, testGen.getTargetBuildDatabase()->compilationDatabase,
-                               fetcher.getStructsToDeclare(), testGen.serverBuildDir)
-                .generateTestHeaders(testGen.tests, testGen.progressWriter);
         types::TypesHandler typesHandler{testGen.types, sizeContext};
         testGen.progressWriter->writeProgress("Generating stub files", 0.0);
         StubGen stubGen(testGen);
-
-        Synchronizer synchronizer(&testGen, &sizeContext);
-        synchronizer.synchronize(typesHandler);
-
+        {
+            Synchronizer synchronizer(&testGen, &sizeContext);
+            synchronizer.synchronize(typesHandler);
+        }
         std::shared_ptr<LineInfo> lineInfo = nullptr;
         auto lineTestGen = dynamic_cast<LineTestGen *>(&testGen);
 
@@ -240,6 +238,48 @@ Status Server::TestsGenServiceImpl::ProcessBaseTestRequest(BaseTestGen &testGen,
 
         FeaturesFilter::filter(testGen.settingsContext, typesHandler, testGen.tests);
         StubsCollector(typesHandler).collect(testGen.tests);
+        if (testGen.projectContext.hasItfPath()) {
+            try {
+                fs::path fullFilePath = testGen.projectContext.getItfAbsPath();
+                if (!fs::exists(fullFilePath)) {
+                    std::string message = "File with init and teardown functions, doesn't exists";
+                    LOG_S(ERROR) << message;
+                    throw EnvironmentException(message);
+                }
+                LOG_S(INFO) << "Use init and teardown functions from: " << fullFilePath;
+                nlohmann::json itfJson = JsonUtils::getJsonFromFile(fullFilePath);
+                auto defaultInitIt = itfJson.find("default init");
+                std::string defaultInitial = itfJson.value("default init", "");
+                std::string defaultTeardown = itfJson.value("default teardown", "");
+
+                std::optional<nlohmann::json> initJson = std::nullopt;
+                if (itfJson.contains("init")) {
+                    initJson = itfJson.at("init");
+                }
+
+                std::optional<nlohmann::json> teardownJson = std::nullopt;
+                if (itfJson.contains("teardown")) {
+                    teardownJson = itfJson.at("teardown");
+                }
+                for (tests::TestsMap::iterator it = testGen.tests.begin(); it != testGen.tests.end(); ++it) {
+                    tests::Tests &tests = it.value();
+                    for (tests::Tests::MethodsMap::iterator testsIt = tests.methods.begin();
+                         testsIt != tests.methods.end(); testsIt++) {
+                        const std::string &methodName = testsIt.key();
+                        tests::Tests::MethodDescription &method = testsIt.value();
+                        if (initJson.has_value()) {
+                            method.initFunction = initJson->value(methodName, defaultInitial);
+                        }
+                        if (teardownJson.has_value()) {
+                            method.teardownFunction = teardownJson->value(methodName, defaultTeardown);
+                        }
+                    }
+                }
+            } catch (const std::exception &e) {
+                LOG_S(ERROR) << e.what();
+                throw EnvironmentException(e.what());
+            }
+        }
 
         PathSubstitution pathSubstitution = {};
         if (lineTestGen != nullptr) {
@@ -249,15 +289,17 @@ Status Server::TestsGenServiceImpl::ProcessBaseTestRequest(BaseTestGen &testGen,
             if (lineTestGen->needToAddPathFlag()) {
                 LOG_S(DEBUG) << "Added test line flag for file " << lineInfo->filePath;
                 fs::path flagFilePath =
-                        printer::KleePrinter(&typesHandler, nullptr, Paths::getSourceLanguage(lineInfo->filePath))
+                        printer::KleePrinter(&typesHandler, nullptr, Paths::getSourceLanguage(lineInfo->filePath),
+                                             &testGen)
                                 .addTestLineFlag(lineInfo, lineInfo->forAssert, testGen.projectContext);
                 pathSubstitution = {lineTestGen->filePath, flagFilePath};
             }
         }
         auto generator = std::make_shared<KleeGenerator>(&testGen, typesHandler, pathSubstitution);
-
-        ReturnTypesFetcher returnTypesFetcher{&testGen};
-        returnTypesFetcher.fetch(testGen.progressWriter, synchronizer.getTargetSourceFiles());
+        {
+            ReturnTypesFetcher returnTypesFetcher(&testGen);
+            returnTypesFetcher.fetch(testGen.progressWriter);
+        }
         LOG_S(DEBUG) << "Temporary build directory path: " << testGen.serverBuildDir;
         generator->buildKleeFiles(testGen.tests, lineInfo);
         generator->handleFailedFunctions(testGen.tests);
@@ -265,6 +307,10 @@ Status Server::TestsGenServiceImpl::ProcessBaseTestRequest(BaseTestGen &testGen,
         Linker linker{testGen, stubGen, lineInfo, generator};
         linker.prepareArtifacts();
         auto testMethods = linker.getTestMethods();
+        auto selectedTargets = linker.getSelectedTargets();
+        SourceToHeaderRewriter(testGen.projectContext, testGen.getTargetBuildDatabase()->compilationDatabase,
+                               fetcher.getStructsToDeclare(), testGen.serverBuildDir, typesHandler)
+                .generateTestHeaders(testGen.tests, stubGen, selectedTargets, testGen.progressWriter);
         KleeRunner kleeRunner{testGen.projectContext, testGen.settingsContext};
         bool interactiveMode = (dynamic_cast<ProjectTestGen *>(&testGen) != nullptr);
         auto generationStartTime = std::chrono::steady_clock::now();
@@ -314,11 +360,14 @@ std::shared_ptr<LineInfo> Server::TestsGenServiceImpl::getLineInfo(LineTestGen &
                              lineTestGen.compileCommandsJsonPath);
     stmtFinder.findFunction();
     if (!stmtFinder.getLineInfo().initialized) {
-        throw NoTestGeneratedException(
-                "Maybe you tried to generate tests placing cursor on invalid line.");
+        LOG_S(ERROR) << "Cant generate for this line\n"
+                     << stmtFinder.getLineInfo().stmtString;
+        throw NoTestGeneratedException("Maybe you tried to generate tests placing cursor on invalid line.");
     }
     if (isSameType<AssertionTestGen>(lineTestGen) &&
         !StringUtils::contains(stmtFinder.getLineInfo().stmtString, "assert")) {
+        LOG_S(ERROR) << "No assert found on this line\n"
+                     << stmtFinder.getLineInfo().stmtString;
         throw NoTestGeneratedException("No assert found on this line.");
     }
     auto lineInfo = std::make_shared<LineInfo>(stmtFinder.getLineInfo());
@@ -342,6 +391,7 @@ std::string extractMessage(const loguru::Message &message) {
 void Server::logToClient(void *channel, const loguru::Message &message) {
     auto data = reinterpret_cast<WriterData *>(channel);
     if (data == nullptr) {
+        LOG_S(ERROR) << "Couldn't handle logging to client, data is null";
         throw BaseException("Couldn't handle logging to client, data is null");
     }
     std::vector<char> thread_name(LOGURU_BUFFER_SIZE);
@@ -360,6 +410,7 @@ void Server::logToClient(void *channel, const loguru::Message &message) {
 void Server::gtestLog(void *channel, const loguru::Message &message) {
     auto data = reinterpret_cast<WriterData *>(channel);
     if (data == nullptr) {
+        LOG_S(ERROR) << "Can't interpret gtest log channel";
         throw BaseException("Can't interpret gtest log channel");
     }
     std::vector<char> thread_name(LOGURU_BUFFER_SIZE);
@@ -555,15 +606,17 @@ Status Server::TestsGenServiceImpl::ProcessProjectStubsRequest(BaseTestGen *test
                     testGen->compileCommandsJsonPath, false);
 
     fetcher.fetchWithProgress(testGen->progressWriter, logMessage);
-    Synchronizer synchronizer(testGen, &sizeContext);
-    synchronizer.synchronize(typesHandler);
-    stubsWriter->writeResponse(testGen->synchronizedStubs, testGen->projectContext.testDirPath);
+    {
+        Synchronizer synchronizer(testGen, &sizeContext);
+        synchronizer.synchronize(typesHandler);
+    }
+    stubsWriter->writeResponse(testGen->synchronizedStubs, testGen->projectContext.getTestDirAbsPath());
     return Status::OK;
 }
 
 Status Server::TestsGenServiceImpl::failedToLoadCDbStatus(const CompilationDatabaseException &e) {
-    return Status(StatusCode::INVALID_ARGUMENT,
-                  "Failed to find compile_commands.json:\n" + std::string(e.what()));
+    return {StatusCode::INVALID_ARGUMENT,
+            "Failed to find compile_commands.json:\n" + std::string(e.what())};
 }
 
 Status Server::TestsGenServiceImpl::PrintModulesContent(ServerContext *context,
@@ -578,7 +631,8 @@ Status Server::TestsGenServiceImpl::PrintModulesContent(ServerContext *context,
 
     utbot::ProjectContext projectContext{*request};
     fs::path serverBuildDir = Paths::getUTBotBuildDir(projectContext);
-    std::shared_ptr<ProjectBuildDatabase> buildDatabase = std::make_shared<ProjectBuildDatabase>(projectContext);
+    std::shared_ptr<ProjectBuildDatabase> buildDatabase =
+            std::make_shared<ProjectBuildDatabase>(projectContext, true);
     StubSourcesFinder(buildDatabase).printAllModules();
     return Status::OK;
 }
@@ -617,8 +671,8 @@ Server::TestsGenServiceImpl::ConfigureProject(ServerContext *context,
     MEASURE_FUNCTION_EXECUTION_TIME
 
     utbot::ProjectContext utbotProjectContext{request->projectcontext()};
-    fs::path buildDirPath =
-            fs::path(utbotProjectContext.projectPath) / utbotProjectContext.buildDirRelativePath;
+
+    fs::path buildDirPath = utbotProjectContext.getBuildDirAbsPath();
     switch (request->configmode()) {
         case ConfigMode::CHECK:
             return UserProjectConfiguration::CheckProjectConfiguration(buildDirPath, writer);
@@ -653,12 +707,17 @@ Status Server::TestsGenServiceImpl::GetProjectTargets(ServerContext *context,
 
     try {
         utbot::ProjectContext projectContext{request->projectcontext()};
-        auto buildDatabase = std::make_shared<ProjectBuildDatabase>(projectContext);
+        auto buildDatabase = std::make_shared<ProjectBuildDatabase>(projectContext, true);
         std::vector<fs::path> targets = buildDatabase->getAllTargetPaths();
         ProjectTargetsWriter targetsWriter(response);
         targetsWriter.writeResponse(projectContext, targets);
     } catch (CompilationDatabaseException const &e) {
+        LOG_S(ERROR) << "Compilation database error: " << e.what();
         return failedToLoadCDbStatus(e);
+    } catch (std::exception const &e) {
+        std::string message = StringUtils::stringFormat("Error during construct compilation database: %s", e.what());
+        LOG_S(ERROR) << message;
+        return {StatusCode::UNKNOWN, message};
     }
     return Status::OK;
 }
@@ -675,7 +734,7 @@ Status Server::TestsGenServiceImpl::GetFileTargets(ServerContext *context,
 
     try {
         utbot::ProjectContext projectContext{request->projectcontext()};
-        auto buildDatabase = std::make_shared<ProjectBuildDatabase>(projectContext);
+        auto buildDatabase = std::make_shared<ProjectBuildDatabase>(projectContext, true);
         fs::path path = request->path();
         auto targetPaths = buildDatabase->getTargetPathsForSourceFile(path);
         FileTargetsWriter targetsWriter{response};
@@ -688,7 +747,7 @@ Status Server::TestsGenServiceImpl::GetFileTargets(ServerContext *context,
 
 RequestLockMutex &Server::TestsGenServiceImpl::getLock() {
     std::string const &client = RequestEnvironment::getClientId();
-    auto[iterator, inserted] = locks.try_emplace(client);
+    auto [iterator, inserted] = locks.try_emplace(client);
     return iterator->second;
 }
 

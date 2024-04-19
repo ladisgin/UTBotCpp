@@ -1,3 +1,4 @@
+#include <utils/stats/TestsExecutionStats.h>
 #include "TestRunner.h"
 
 #include "printers/DefaultMakefilePrinter.h"
@@ -7,7 +8,6 @@
 #include "utils/FileSystemUtils.h"
 #include "utils/JsonUtils.h"
 #include "utils/StringUtils.h"
-#include "utils/stats/TestsExecutionStats.h"
 
 #include "loguru.h"
 
@@ -44,14 +44,14 @@ std::vector<UnitTest> TestRunner::getTestsFromMakefile(const fs::path &makefile,
     auto cmdGetAllTests = MakefileUtils::MakefileCommand(projectContext, makefile,
                                                          printer::DefaultMakefilePrinter::TARGET_RUN,
                                                          "--gtest_list_tests", {"GTEST_FILTER=*"});
-    auto[out, status, _] = cmdGetAllTests.run(projectContext.buildDir(), false);
+    auto[out, status, _] = cmdGetAllTests.run(projectContext.getBuildDirAbsPath(), false);
     if (status != 0) {
-        auto [err, _, logFilePath] = cmdGetAllTests.run(projectContext.buildDir(), true);
+        auto [err, _, logFilePath] = cmdGetAllTests.run(projectContext.getBuildDirAbsPath(), true);
         progressWriter->writeProgress(StringUtils::stringFormat("command %s failed.\n"
                                                                 "see: \"%s\"",
                                                                 cmdGetAllTests.getFailedCommand(),
                                                                 logFilePath.value()));
-
+        LOG_S(ERROR) << err;
         throw ExecutionProcessException(err, logFilePath.value());
     }
     if (out.empty()) {
@@ -64,18 +64,16 @@ std::vector<UnitTest> TestRunner::getTestsFromMakefile(const fs::path &makefile,
         StringUtils::trim(s);
     }
     std::string testSuite;
-    std::vector<std::string> testsList;
-    for (const std::string &s : gtestListTestsOutput) {
+    std::vector<UnitTest> testList;
+    for (const std::string &s: gtestListTestsOutput) {
         if (s.back() == '.') {
             testSuite = s;
             testSuite.pop_back();
         } else {
-            testsList.push_back(s);
+            testList.push_back({testFilePath, testSuite, s});
         }
     }
-    return CollectionUtils::transform(testsList, [&testFilePath, &testSuite](std::string const &name) {
-        return UnitTest{ testFilePath, testSuite, name };
-    });
+    return testList;
 }
 
 std::vector<UnitTest> TestRunner::getTestsToLaunch() {
@@ -83,8 +81,8 @@ std::vector<UnitTest> TestRunner::getTestsToLaunch() {
         //for project
         std::vector<UnitTest> result;
 
-        if (fs::exists(projectContext.testDirPath)) {
-            FileSystemUtils::RecursiveDirectoryIterator directoryIterator(projectContext.testDirPath);
+        if (fs::exists(projectContext.getTestDirAbsPath())) {
+            FileSystemUtils::RecursiveDirectoryIterator directoryIterator(projectContext.getTestDirAbsPath());
             ExecUtils::doWorkWithProgress(
                 directoryIterator, progressWriter, "Building tests",
                 [this, &result](fs::directory_entry const &directoryEntry) {
@@ -92,10 +90,11 @@ std::vector<UnitTest> TestRunner::getTestsToLaunch() {
                         return;
                     }
                     const auto &testFilePath = directoryEntry.path();
-                    if (StringUtils::endsWith(testFilePath.c_str(), "_test.cpp")) {
+                    if (testFilePath.extension() == Paths::CXX_EXTENSION &&
+                        StringUtils::endsWith(testFilePath.stem().c_str(), Paths::TEST_SUFFIX)) {
                         fs::path sourcePath = Paths::testPathToSourcePath(projectContext, testFilePath);
                         fs::path makefile =
-                            Paths::getMakefilePathFromSourceFilePath(projectContext, sourcePath);
+                                Paths::getMakefilePathFromSourceFilePath(projectContext, sourcePath);
                         if (fs::exists(makefile)) {
                             try {
                                 auto tests = getTestsFromMakefile(makefile, testFilePath);
@@ -108,15 +107,16 @@ std::vector<UnitTest> TestRunner::getTestsToLaunch() {
                                 "Makefile for %s not found, candidate: %s", testFilePath, makefile);
                         }
                     } else {
-                        if (!StringUtils::endsWith(testFilePath.c_str(), "_test.h") &&
-                            !StringUtils::endsWith(testFilePath.stem().c_str(), "_stub")) {
-                            LOG_S(WARNING)
-                                << "Found extra file in test directory: " << testFilePath;
+                        if (!StringUtils::endsWith(testFilePath.stem().c_str(), Paths::TEST_SUFFIX) &&
+                            !StringUtils::endsWith(testFilePath.stem().c_str(), Paths::STUB_SUFFIX) &&
+                            !StringUtils::endsWith(testFilePath.stem().c_str(), Paths::MAKE_WRAPPER_SUFFIX) &&
+                            !StringUtils::endsWith(testFilePath.c_str(), Paths::MAKEFILE_EXTENSION)) {
+                            LOG_S(WARNING) << "Found extra file in test directory: " << testFilePath;
                         }
                     }
                 });
         } else {
-            LOG_S(WARNING) << "Test folder doesn't exist: " << projectContext.testDirPath;
+            LOG_S(WARNING) << "Test folder doesn't exist: " << projectContext.getTestDirAbsPath();
         }
         return result;
     }
@@ -176,7 +176,7 @@ bool TestRunner::buildTest(const utbot::ProjectContext& projectContext, const fs
         auto command = MakefileUtils::MakefileCommand(projectContext, makefile,
                                                       printer::DefaultMakefilePrinter::TARGET_BUILD, "", {});
         LOG_S(DEBUG) << "Try compile tests for: " << sourcePath.string();
-        auto[out, status, logFilePath] = command.run(projectContext.buildDir(), true);
+        auto[out, status, logFilePath] = command.run(projectContext.getBuildDirAbsPath(), true);
         if (status != 0) {
             return false;
         }
@@ -198,7 +198,7 @@ size_t TestRunner::buildTests(const utbot::ProjectContext& projectContext, const
 testsgen::TestResultObject TestRunner::runTest(const BuildRunCommand &command,
                                                const std::optional <std::chrono::seconds> &testTimeout) {
     fs::remove(Paths::getGTestResultsJsonPath(projectContext));
-    auto res = command.runCommand.run(projectContext.buildDir(), true, true, testTimeout);
+    auto res = command.runCommand.run(projectContext.getBuildDirAbsPath(), true, true, testTimeout);
     GTestLogger::log(res.output);
     testsgen::TestResultObject testRes;
     testRes.set_testfilepath(command.unitTest.testFilePath);

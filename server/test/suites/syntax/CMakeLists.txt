@@ -36,8 +36,14 @@ add_executable(syntax1
         simple_class.cpp
         inner_unnamed.c
         array_sort.c
+        constructors.cpp
         stubs.c
         namespace.cpp
         input_output.c
         file.c
-        bitfields.c)
+        bitfields.c
+        function_with_rvalue_params.cpp
+        hard_linked_list.c
+        unsupported_class.cpp
+        inits.c
+)

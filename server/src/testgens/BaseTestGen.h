@@ -35,9 +35,9 @@ public:
 
     virtual std::string toString() = 0;
 
-    bool needToBeMocked() const;
+    [[nodiscard]] bool needToBeMocked() const;
 
-    bool isBatched() const;
+    [[nodiscard]] bool isBatched() const;
 
     void setTargetPath(fs::path _targetPath);
 
@@ -50,6 +50,10 @@ public:
     std::shared_ptr<ProjectBuildDatabase> getProjectBuildDatabase();
 
     std::shared_ptr<TargetBuildDatabase> getTargetBuildDatabase();
+
+    const CollectionUtils::FileSet &getTargetSourceFiles() const;
+
+    const CollectionUtils::FileSet &getProjectSourceFiles() const;
 
     std::shared_ptr<const BuildDatabase::ObjectFileInfo>
     getClientCompilationUnitInfo(const fs::path &path, bool fullProject = false) const;

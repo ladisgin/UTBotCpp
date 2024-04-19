@@ -10,7 +10,7 @@
 #include <CLI11.hpp>
 #include <string>
 
-
+using namespace ::testsgen;
 
 namespace Commands {
     extern uint32_t threadsPerUser;
@@ -27,8 +27,15 @@ namespace Commands {
 
         CLI::App *getAllCommand();
 
+        fs::path getLogPath();
+
+        loguru::NamedVerbosity getVerbosity();
 
     private:
+        loguru::NamedVerbosity verbosity = loguru::Verbosity_INFO;
+        fs::path logPath;
+        static const std::map<std::string, loguru::NamedVerbosity> verbosityMap;
+
         CLI::App *serverCommand;
         CLI::App *generateCommand;
         CLI::App *runTestsCommand;
@@ -38,21 +45,14 @@ namespace Commands {
     struct ServerCommandOptions {
         explicit ServerCommandOptions(CLI::App *command);
 
-        fs::path getLogPath();
-
-        loguru::NamedVerbosity getVerbosity();
-
         unsigned int getPort();
 
         unsigned int getThreadsPerUser();
 
         unsigned int getKleeProcessNumber();
+
     private:
         unsigned int port = 0;
-        fs::path logPath;
-
-        loguru::NamedVerbosity verbosity;
-        static const std::map<std::string, loguru::NamedVerbosity> verbosityMap;
     };
 
 
@@ -60,25 +60,43 @@ namespace Commands {
         explicit GenerateCommands(CLI::App *command);
 
         CLI::App *getProjectCommand();
+
         CLI::App *getStubsCommand();
+
         CLI::App *getFolderCommand();
+
         CLI::App *getFileCommand();
+
         CLI::App *getSnippetCommand();
+
         CLI::App *getFunctionCommand();
+
         CLI::App *getClassCommand();
+
         CLI::App *getLineCommand();
+
         CLI::App *getAssertionCommand();
+
         CLI::App *getPredicateCommand();
 
         bool gotProjectCommand();
+
         bool gotStubsCommand();
+
         bool gotFolderCommand();
+
         bool gotFileCommand();
+
         bool gotSnippetCommand();
+
         bool gotFunctionCommand();
+
         bool gotClassCommand();
+
         bool gotLineCommand();
+
         bool gotAssertionCommand();
+
         bool gotPredicateCommand();
 
     private:
@@ -147,7 +165,7 @@ namespace Commands {
 
         // predicate info
 
-        testsgen::ValidationType type{ testsgen::ValidationType::INT32_T };
+        testsgen::ValidationType type{testsgen::ValidationType::INT32_T};
         static const std::map<std::string, testsgen::ValidationType> validationTypeMap;
         std::string validationType;
         std::string predicate;
@@ -217,13 +235,19 @@ namespace Commands {
 
         [[nodiscard]] std::string getTestDirectory() const;
 
+        [[nodiscard]] std::string getReportDirectory() const;
+
         [[nodiscard]] std::string getBuildDirectory() const;
+
+        [[nodiscard]] std::string getItfRelPath() const;
 
     private:
         CLI::Option_group *projectContextOptions;
         fs::path projectPath;
-        std::string testDir = "tests";
-        std::string buildDir = "build";
+        std::string testRelDir = Paths::UTBOT_TESTS;
+        std::string reportRelDir = Paths::UTBOT_REPORT;
+        std::string buildRelDir = Paths::UTBOT_BUILD;
+        std::string itfRelPath = Paths::UTBOT_ITF;
     };
 
     struct SettingsContextOptionGroup {
@@ -243,6 +267,12 @@ namespace Commands {
 
         [[nodiscard]] bool withStubs() const;
 
+        [[nodiscard]] ErrorMode getErrorMode() const;
+
+        [[nodiscard]] bool doDifferentVariablesOfTheSameType() const;
+
+        [[nodiscard]] bool getSkipObjectWithoutSource() const;
+
     private:
         CLI::Option_group *settingsContextOptions;
         bool generateForStaticFunctions = true;
@@ -251,6 +281,9 @@ namespace Commands {
         int32_t timeoutPerTest = 30;
         bool noDeterministicSearcher = false;
         bool noStubs = false;
+        ErrorMode errorMode = ErrorMode::FAILING;
+        bool differentVariablesOfTheSameType = false;
+        bool skipObjectWithoutSource = false;
     };
 };
 

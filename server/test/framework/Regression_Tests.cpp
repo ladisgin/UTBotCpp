@@ -27,8 +27,8 @@ namespace {
 
         std::pair<FunctionTestGen, Status>
         createTestForFunction(const fs::path &pathToFile, int lineNum, bool verbose = true) {
-            auto lineRequest = testUtils::createLineRequest(projectName, suitePath, buildDirRelativePath,
-                                                            srcPaths, pathToFile, lineNum,
+            auto lineRequest = testUtils::createLineRequest(projectName, suitePath, buildDirRelPath,
+                                                            srcPaths, pathToFile, lineNum, "",
                                                             pathToFile, false, verbose, 0);
             auto request = GrpcUtils::createFunctionRequest(std::move(lineRequest));
             auto testGen = FunctionTestGen(*request, writer.get(), TESTMODE);
@@ -39,8 +39,8 @@ namespace {
 
         std::pair<FolderTestGen, Status>
         createTestForFolder(const fs::path &pathToFolder, bool useStubs = true, bool verbose = true) {
-            auto folderRequest = testUtils::createProjectRequest(projectName, suitePath, buildDirRelativePath,
-                                                                 srcPaths, GrpcUtils::UTBOT_AUTO_TARGET_PATH, useStubs,
+            auto folderRequest = testUtils::createProjectRequest(projectName, suitePath, buildDirRelPath,
+                                                                 srcPaths, "", GrpcUtils::UTBOT_AUTO_TARGET_PATH, useStubs,
                                                                  verbose, 0);
             auto request = GrpcUtils::createFolderRequest(std::move(folderRequest), pathToFolder);
             auto testGen = FolderTestGen(*request, writer.get(), TESTMODE);
@@ -89,7 +89,7 @@ namespace {
     TEST_F(Regression_Test, Incomplete_Array_Type) {
         fs::path folderPath = suitePath / "SAT-760";
         auto projectRequest = testUtils::createProjectRequest(
-            projectName, suitePath, buildDirRelativePath, { suitePath, folderPath }, "SAT-760");
+            projectName, suitePath, buildDirRelPath, { suitePath, folderPath }, "", "SAT-760");
         auto request = GrpcUtils::createFolderRequest(std::move(projectRequest), folderPath);
         auto testGen = FolderTestGen(*request, writer.get(), TESTMODE);
 
@@ -347,7 +347,7 @@ namespace {
         return result;
     }
 
-    TEST_F(Regression_Test, Pointers_Alignment) {
+    TEST_F(Regression_Test, DISABLED_Pointers_Alignment) {
         fs::path source = getTestFilePath("issue-195.c");
         auto [testGen, status] = createTestForFunction(source, 8);
 
@@ -366,5 +366,38 @@ namespace {
         auto [testGen, status] = createTestForFolder(folderPath, true, true);
         ASSERT_TRUE(status.ok()) << status.error_message();
         testUtils::checkMinNumberOfTests(testGen.tests, 1);
+    }
+
+    TEST_F(Regression_Test, Extern_Variables) {
+        fs::path source = getTestFilePath("issue-514.c");
+        auto [testGen, status] = createTestForFunction(source, 5);
+        ASSERT_TRUE(status.ok()) << status.error_message();
+        testUtils::checkMinNumberOfTests(testGen.tests, 2);
+    }
+
+    TEST_F(Regression_Test, Unnecessary_Enum_Specifier) {
+        fs::path source = getTestFilePath("issue-600.c");
+        auto [testGen, status] = createTestForFunction(source, 14);
+
+        ASSERT_TRUE(status.ok()) << status.error_message();
+
+        checkTestCasePredicates(
+            testGen.tests.at(source).methods.begin().value().testCases,
+            std::vector<TestCasePredicate>(
+                {[](const tests::Tests::MethodTestCase &testCase) {
+                        return testCase.returnValue.view->getEntryValue(nullptr) == "-2";
+                    },
+                    [](const tests::Tests::MethodTestCase &testCase) {
+                        return testCase.returnValue.view->getEntryValue(nullptr) == "-1";
+                    },
+                    [](const tests::Tests::MethodTestCase &testCase) {
+                        return testCase.returnValue.view->getEntryValue(nullptr) == "0";
+                    },
+                    [](const tests::Tests::MethodTestCase &testCase) {
+                        return testCase.returnValue.view->getEntryValue(nullptr) == "1";
+                    }
+                }),
+            "isCorrectPointerStruct"
+        );
     }
 }

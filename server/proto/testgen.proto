@@ -86,8 +86,17 @@ message LogEntry {
 message ProjectContext {
     string projectName = 1;
     string projectPath = 2;
-    string testDirPath = 3;
-    string buildDirRelativePath = 4;
+    string clientProjectPath = 3;
+    string testDirRelPath = 4;
+    string reportDirRelPath = 5;
+    string buildDirRelPath = 6;
+    string itfRelPath = 7;
+}
+
+enum ErrorMode {
+    FAILING = 0;
+    PASSING_IN_TARGET_ONLY = 1;
+    PASSING = 2;
 }
 
 message SettingsContext {
@@ -97,6 +106,9 @@ message SettingsContext {
     int32 timeoutPerTest = 4;
     bool useDeterministicSearcher = 5;
     bool useStubs = 6;
+    ErrorMode errorMode = 7;
+    bool differentVariablesOfTheSameType = 8;
+    bool skipObjectWithoutSource = 9;
 }
 
 message SnippetRequest {

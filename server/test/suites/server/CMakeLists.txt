@@ -13,20 +13,30 @@ add_executable(server
         assertion_failures.c
         basic_functions.c
         dependent_functions.c
+        different_variables.c
         floating_point.c
         floating_point_plain.c
         globals.c
         keywords.c
         linkage.c
         main.c
+        multi_dim_pointers.c
         pointer_parameters.c
         pointer_return.c
         simple_structs.c
         simple_unions.c
+        struct_with_union.c
+        structs_with_pointers.c
+        thread_local.c
         complex_structs.c
         typedefs.c
         types.c
         alignment.c
         symbolic_stdin.c
         multiple_classes.cpp
+        file.c
+        hard_linked_list.c
+        input_output.c
+        linked_list.c
+        tree.c
         )

@@ -16,6 +16,7 @@
 #include <vector>
 
 using tests::Tests;
+using namespace ::testsgen;
 
 namespace printer {
     class TestsPrinter : public Printer {
@@ -28,7 +29,8 @@ namespace printer {
 
         void genCode(Tests::MethodDescription &methodDescription,
                      const std::optional<LineInfo::PredicateInfo> &predicateInfo = {},
-                     bool verbose = false);
+                     bool verbose = false,
+                     ErrorMode errorMode = ErrorMode::FAILING);
 
         void joinToFinalCode(Tests &tests, const fs::path &generatedHeaderPath);
 
@@ -38,11 +40,13 @@ namespace printer {
 
         void genParametrizedTestCase(const tests::Tests::MethodDescription &methodDescription,
                                      const Tests::MethodTestCase &testCase,
-                                     const std::optional<LineInfo::PredicateInfo>& predicateInfo);
+                                     const std::optional<LineInfo::PredicateInfo>& predicateInfo,
+                                     ErrorMode errorMode);
 
         void genVerboseTestCase(const tests::Tests::MethodDescription &methodDescription,
                                 const Tests::MethodTestCase &testCase,
-                                const std::optional<LineInfo::PredicateInfo> &predicateInfo);
+                                const std::optional<LineInfo::PredicateInfo> &predicateInfo,
+                                ErrorMode errorMode);
 
         void testHeader(const Tests::MethodTestCase &testCase);
 
@@ -69,24 +73,26 @@ namespace printer {
                                    const Tests::MethodTestCase &testCase);
 
         void verboseFunctionCall(const tests::Tests::MethodDescription &methodDescription,
-                                 const Tests::MethodTestCase &testCase);
+                                 const Tests::MethodTestCase &testCase,
+                                 ErrorMode errorMode);
 
         void verboseAsserts(const tests::Tests::MethodDescription &methodDescription,
                             const Tests::MethodTestCase &testCase,
-                            const std::optional<LineInfo::PredicateInfo>& predicateInfo);
+                            const std::optional<LineInfo::PredicateInfo> &predicateInfo);
 
         void classAsserts(const Tests::MethodDescription &methodDescription,
-                                        const Tests::MethodTestCase &testCase);
+                          const Tests::MethodTestCase &testCase);
 
         void changeableParamsAsserts(const Tests::MethodDescription &methodDescription,
-                            const Tests::MethodTestCase &testCase);
+                                     const Tests::MethodTestCase &testCase);
 
         void globalParamsAsserts(const Tests::MethodDescription &methodDescription,
-                            const Tests::MethodTestCase &testCase);
-        
+                                 const Tests::MethodTestCase &testCase);
+
         void parametrizedAsserts(const tests::Tests::MethodDescription &methodDescription,
                                  const Tests::MethodTestCase &testCase,
-                                 const std::optional<LineInfo::PredicateInfo>& predicateInfo);
+                                 const std::optional<LineInfo::PredicateInfo>& predicateInfo,
+                                 ErrorMode errorMode);
 
         void markTestedFunctionCallIfNeed(const std::string &name,
                                           const Tests::MethodTestCase &testCase);
@@ -104,7 +110,8 @@ namespace printer {
 
         std::string constrVisitorFunctionCall(const tests::Tests::MethodDescription &methodDescription,
                                               const Tests::MethodTestCase &testCase,
-                                              bool verboseMode);
+                                              bool verboseMode,
+                                              ErrorMode errorMode);
 
         struct FunctionSignature {
             std::string name;
@@ -121,9 +128,8 @@ namespace printer {
         parametrizedInitializeGlobalVariables(const Tests::MethodDescription &methodDescription,
                                               const Tests::MethodTestCase &testCase);
 
-        void
-        parametrizedInitializeSymbolicStubs(const Tests::MethodDescription &methodDescription,
-                                            const Tests::MethodTestCase &testCase);
+        void parametrizedInitializeSymbolicStubs(const Tests::MethodDescription &methodDescription,
+                                                 const Tests::MethodTestCase &testCase);
 
         void printLazyVariables(const Tests::MethodDescription &methodDescription,
                                 const Tests::MethodTestCase &testCase,
@@ -142,8 +148,8 @@ namespace printer {
                                  const Tests::MethodTestCase &testCase,
                                  bool verbose);
 
-        void printStubVariables(const Tests::MethodDescription &methodDescription,
-                                const Tests::MethodTestCase &testCase);
+        void printStubVariablesForParam(const Tests::MethodDescription &methodDescription,
+                                        const Tests::MethodTestCase &testCase);
 
         void printPointerParameter(const tests::Tests::MethodDescription &methodDescription,
                                    const Tests::MethodTestCase &testCase,
@@ -155,11 +161,12 @@ namespace printer {
                                 Tests::MethodDescription &methodDescription,
                                 const std::optional<LineInfo::PredicateInfo> &predicateInfo,
                                 bool verbose,
-                                int &testNum);
+                                int &testNum,
+                                ErrorMode errorMode);
 
         std::uint32_t printSuiteAndReturnMethodsCount(const std::string &suiteName, const Tests::MethodsMap &methods);
 
-        void printFailAssertion();
+        void printFailAssertion(ErrorMode errorMode);
     };
 }
 #endif // UNITTESTBOT_TESTSPRINTER_H

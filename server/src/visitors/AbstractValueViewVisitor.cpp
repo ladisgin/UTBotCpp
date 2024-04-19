@@ -76,6 +76,7 @@ namespace visitor {
             visitArrayElementAfter(newType, newName, newView, newAccess, depth + 1);
         }
     }
+
     void AbstractValueViewVisitor::visitCString(const types::Type &type,
                                                 const std::string &name,
                                                 const tests::AbstractValueView *view,
@@ -85,15 +86,15 @@ namespace visitor {
     }
 
     void AbstractValueViewVisitor::visitStruct(const types::Type &type,
-                                              const std::string &name,
-                                              const tests::AbstractValueView *view,
-                                              const std::string &access,
-                                              int depth) {
+                                               const std::string &name,
+                                               const tests::AbstractValueView *view,
+                                               const std::string &access,
+                                               int depth) {
         const types::StructInfo &structInfo = typesHandler->getStructInfo(type);
         auto subViews = view ? &view->getSubViews() : nullptr;
 
         bool oldFlag = inUnion;
-        inUnion = structInfo.subType == types::SubType::Union;
+        inUnion |= structInfo.subType == types::SubType::Union;
         for (int i = 0; i < structInfo.fields.size(); ++i) {
             auto const &field = structInfo.fields[i];
             auto newName = PrinterUtils::getFieldAccess(name, field);
@@ -103,6 +104,7 @@ namespace visitor {
         }
         inUnion = oldFlag;
     }
+
     void AbstractValueViewVisitor::visitEnum(const types::Type &type,
                                              const std::string &name,
                                              const tests::AbstractValueView *view,

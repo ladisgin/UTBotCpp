@@ -8,15 +8,23 @@
 ProjectTestGen::ProjectTestGen(const testsgen::ProjectRequest &request,
                                ProgressWriter *progressWriter,
                                bool testMode,
-                               bool autoDetect)
+                               bool autoDetect,
+                               const std::optional<fs::path> &sourceFile)
         : BaseTestGen(request.projectcontext(),
                       request.settingscontext(),
                       progressWriter,
                       testMode), request(&request) {
-    fs::create_directories(projectContext.testDirPath);
+    fs::create_directories(projectContext.getTestDirAbsPath());
     compileCommandsJsonPath = CompilationUtils::substituteRemotePathToCompileCommandsJsonPath(projectContext);
-    projectBuildDatabase = std::make_shared<ProjectBuildDatabase>(compileCommandsJsonPath, serverBuildDir, projectContext);
-    targetBuildDatabase = std::make_shared<TargetBuildDatabase>(projectBuildDatabase.get(), request.targetpath());
+    projectBuildDatabase = std::make_shared<ProjectBuildDatabase>(compileCommandsJsonPath, serverBuildDir,
+                                                                  projectContext,
+                                                                  settingsContext.skipObjectWithoutSource);
+    if (sourceFile.has_value() && Paths::isSourceFile(sourceFile.value()) &&
+        (request.targetpath() == GrpcUtils::UTBOT_AUTO_TARGET_PATH || request.targetpath().empty())) {
+        targetBuildDatabase = std::make_shared<TargetBuildDatabase>(projectBuildDatabase.get(), sourceFile.value());
+    } else {
+        targetBuildDatabase = std::make_shared<TargetBuildDatabase>(projectBuildDatabase.get(), request.targetpath());
+    }
     if (autoDetect) {
         autoDetectSourcePathsIfNotEmpty();
     } else {

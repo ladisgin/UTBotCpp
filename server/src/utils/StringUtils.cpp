@@ -74,11 +74,18 @@ namespace StringUtils {
     }
 
     void replaceAll(std::string &str, const std::string &from, const std::string &to) {
+        if (from.empty()) {
+            return;
+        }
         size_t start_pos = 0;
         while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
             str.replace(start_pos, from.length(), to);
             start_pos += to.length();
         }
+    }
+
+    void replaceColon(std::string &str) {
+        replaceAll(str, "::", "_");
     }
 
     bool isPrintable(int code) {
@@ -151,7 +158,7 @@ namespace StringUtils {
     }
 
     template<>
-    int stot<>(const std::string& s) {
+    int stot(const std::string& s) {
         return std::stoi(s);
     }
     template<>
@@ -193,7 +200,50 @@ namespace StringUtils {
         } else if (s == "true") {
             return true;
         }
+        LOG_S(ERROR) << "Wrong bool value: " + s;
         throw std::invalid_argument("Wrong bool value: " + s);
+    }
+    template<>
+    __int128 stot(const std::string& s) {
+        if (s.empty()) {
+            throw std::invalid_argument("Empty int128");
+        }
+        bool neg = s[0] == '-';
+        size_t pos = (s[0] == '+' || s[0] == '-') ? 1 : 0;
+        __int128 res = 0;
+        for (; pos < s.size(); ++pos) {
+            char d = s[pos];
+            if (d < '0' || d > '9') {
+                throw std::invalid_argument("Not an int128: " + s);
+            }
+            res *= 10;
+            if (neg) {
+                res -= d - '0';
+            } else {
+                res += d - '0';
+            }
+        }
+        return res;
+    }
+    template<>
+    unsigned __int128 stot(const std::string& s) {
+        if (s.empty()) {
+            throw std::invalid_argument("Empty unsigned int128");
+        }
+        if (s[0] == '-') {
+            throw std::invalid_argument("Signed unsigned int128: " + s);
+        }
+        size_t pos = s[0] == '+' ? 1 : 0;
+        unsigned __int128 res = 0;
+        for (; pos < s.size(); ++pos) {
+            char d = s[pos];
+            if (d < '0' || d > '9') {
+                throw std::invalid_argument("Not an int128: " + s);
+            }
+            res *= 10;
+            res += d - '0';
+        }
+        return res;
     }
 
     std::string wrapQuotations(const std::string &s) {

@@ -8,6 +8,7 @@
 #include "LineInfo.h"
 #include "building/BuildDatabase.h"
 #include "types/Types.h"
+#include "testgens/BaseTestGen.h"
 #include "utils/path/FileSystemPath.h"
 
 #include <cstdio>
@@ -24,28 +25,32 @@ namespace printer {
     public:
         KleePrinter(const types::TypesHandler *typesHandler,
                     std::shared_ptr<BuildDatabase> buildDatabase,
-                    utbot::Language srcLanguage);
+                    utbot::Language srcLanguage, const BaseTestGen *testGen);
 
         utbot::Language getLanguage() const override;
 
         fs::path writeTmpKleeFile(
-            const Tests &tests,
-            const std::string &buildDir,
-            const PathSubstitution &pathSubstitution,
-            const std::optional<LineInfo::PredicateInfo> &predicateInfo = std::nullopt,
-            const std::string &testedMethod = "",
-            const std::optional<std::string> &testedClass = "",
-            bool onlyForOneFunction = false,
-            bool onlyForOneClass = false,
-            const std::function<bool(tests::Tests::MethodDescription const &)> &methodFilter = [](tests::Tests::MethodDescription const &) { return true; });
+                const Tests &tests,
+                const std::string &buildDir,
+                const PathSubstitution &pathSubstitution,
+                const std::optional<LineInfo::PredicateInfo> &predicateInfo = std::nullopt,
+                const std::string &testedMethod = "",
+                const std::optional<std::string> &testedClass = "",
+                bool onlyForOneFunction = false,
+                bool onlyForOneClass = false,
+                const std::function<bool(tests::Tests::MethodDescription const &)> &methodFilter = [](
+                        tests::Tests::MethodDescription const &) { return true; });
 
         std::string addTestLineFlag(const std::shared_ptr<LineInfo> &lineInfo,
                                     bool needAssertion,
                                     const utbot::ProjectContext &projectContext);
 
-    [[nodiscard]] std::vector<std::string> getIncludePaths(const Tests &tests, const PathSubstitution &substitution) const;
+        [[nodiscard]] std::vector<std::string>
+        getIncludePaths(const Tests &tests, const PathSubstitution &substitution) const;
+
     private:
         types::TypesHandler const *typesHandler;
+        BaseTestGen const *testGen;
         std::shared_ptr<BuildDatabase> buildDatabase;
 
         using PredInfo = LineInfo::PredicateInfo;
@@ -69,7 +74,8 @@ namespace printer {
 
         bool genPointerParamDeclaration(const Tests::MethodParam &param);
 
-        void genReturnDeclaration(const Tests::MethodDescription &testMethod, const std::optional<PredInfo> &predicateInfo);
+        void
+        genReturnDeclaration(const Tests::MethodDescription &testMethod, const std::optional<PredInfo> &predicateInfo);
 
         void genParamsKleeAssumes(const Tests::MethodDescription &testMethod,
                                   const std::optional<PredInfo> &predicateInfo,
@@ -85,7 +91,7 @@ namespace printer {
         /*
          * Functions for constraints generation.
          */
-        void genConstraints(const Tests::MethodParam &param, const std::string& methodName = "");
+        void genConstraints(const Tests::MethodParam &param, const std::vector<std::string> &names = {});
 
         void genTwoDimPointers(const Tests::MethodParam &param, bool needDeclare);
 
@@ -107,7 +113,8 @@ namespace printer {
                                                const std::string &testedMethod,
                                                bool onlyForOneEntity);
 
-        [[maybe_unused]] void addHeaderIncludeIfNecessary(std::unordered_set<std::string> &headers, const types::Type &type);
+        [[maybe_unused]] void
+        addHeaderIncludeIfNecessary(std::unordered_set<std::string> &headers, const types::Type &type);
 
         Stream strKleeMakeSymbolic(SRef varName, bool needAmpersand);
 
@@ -118,8 +125,8 @@ namespace printer {
         void genPostGlobalSymbolicVariables(const Tests::MethodDescription &testMethod);
 
         void genPostParamsSymbolicVariables(
-            const Tests::MethodDescription &testMethod,
-            std::function<bool(const tests::Tests::MethodParam &)> filter);
+                const Tests::MethodDescription &testMethod,
+                std::function<bool(const tests::Tests::MethodParam &)> filter);
 
         void makeBracketsForStrPredicate(const std::optional<PredInfo> &info);
 

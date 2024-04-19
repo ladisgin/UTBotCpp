@@ -1,6 +1,7 @@
 #include "KleeConstraintsPrinter.h"
 
 #include "utils/PrinterUtils.h"
+#include "utils/StubsUtils.h"
 #include "exceptions/UnImplementedException.h"
 
 #include "loguru.h"
@@ -14,7 +15,7 @@ printer::KleeConstraintsPrinter::KleeConstraintsPrinter(const types::TypesHandle
     : Printer(srcLanguage), typesHandler(typesHandler) {}
 
 printer::KleeConstraintsPrinter::Stream
-KleeConstraintsPrinter::genConstraints(const std::string &name, const types::Type& type) {
+KleeConstraintsPrinter::genConstraints(const std::string &name, const types::Type& type, const std::vector<std::string>& names) {
     ConstraintsState state = { "&" + name, name, type, true };
     auto paramType = type;
     if (type.maybeJustPointer()) {
@@ -33,19 +34,19 @@ KleeConstraintsPrinter::genConstraints(const std::string &name, const types::Typ
             genConstraintsForEnum(state);
             break;
         default:
-            genConstraintsForPrimitive(state);
+            genConstraintsForPrimitive(state, names);
     }
 
     return ss;
 }
 
 printer::KleeConstraintsPrinter::Stream
-KleeConstraintsPrinter::genConstraints(const Tests::MethodParam &param) {
-    return genConstraints(param.name, param.type);
+KleeConstraintsPrinter::genConstraints(const Tests::MethodParam &param, const std::vector<std::string>& names) {
+    return genConstraints(param.name, param.type, names);
 }
 
-void KleeConstraintsPrinter::genConstraintsForPrimitive(const ConstraintsState &state) {
-    const auto &cons = cexConstraints(state.curElement, state.curType);
+void KleeConstraintsPrinter::genConstraintsForPrimitive(const ConstraintsState &state, const std::vector<std::string>& names) {
+    const auto &cons = cexConstraints(state.curElement, state.curType, names);
     if (!cons.empty()) {
         strFunctionCall(PrinterUtils::KLEE_PREFER_CEX, { state.paramName, cons });
     } else {
@@ -54,7 +55,7 @@ void KleeConstraintsPrinter::genConstraintsForPrimitive(const ConstraintsState &
 }
 
 void KleeConstraintsPrinter::noConstraints(const std::string &cause) {
-    ss << LINE_INDENT() << "// No constraints for " << cause << NL;
+    ss << LINE_INDENT() << "// No constraints for " << cause << printer::NL;
 }
 
 void KleeConstraintsPrinter::genConstraintsForEnum(const ConstraintsState &state) {
@@ -118,21 +119,22 @@ void KleeConstraintsPrinter::genConstraintsForPointerInStruct(const ConstraintsS
 void KleeConstraintsPrinter::genConstraintsForStruct(const ConstraintsState &state) {
     StructInfo curStruct = typesHandler->getStructInfo(state.curType);
     bool isStruct = curStruct.subType == SubType::Struct;
-    for (const auto &field : curStruct.fields) {
+    for (const auto &field: curStruct.fields) {
         auto access = PrinterUtils::getFieldAccess(state.curElement, field);
-        ConstraintsState newState = { state.paramName,
-                                      access,
-                                      field.type,
-                                      isStruct ? state.endString : false,
-                                      state.depth + 1 };
-        std::string stubFunctionName = PrinterUtils::getFunctionPointerAsStructFieldStubName(curStruct.name, field.name);
+        ConstraintsState newState = {state.paramName,
+                                     access,
+                                     field.type,
+                                     isStruct ? state.endString : false,
+                                     state.depth + 1};
+        std::string stubFunctionName = StubsUtils::getFunctionPointerAsStructFieldStubName(curStruct.name, field.name,
+                                                                                           false);
         switch (typesHandler->getTypeKind(field.type)) {
-        case TypeKind::STRUCT_LIKE:
-            genConstraintsForStruct(newState);
-            break;
-        case TypeKind::ENUM:
-            genConstraintsForEnum(newState);
-            break;
+            case TypeKind::STRUCT_LIKE:
+                genConstraintsForStruct(newState);
+                break;
+            case TypeKind::ENUM:
+                genConstraintsForEnum(newState);
+                break;
         case TypeKind::PRIMITIVE:
             genConstraintsForPrimitive(newState);
             break;
@@ -153,6 +155,7 @@ void KleeConstraintsPrinter::genConstraintsForStruct(const ConstraintsState &sta
         case TypeKind::UNKNOWN: {
             std::string errorMessage = "Unrecognized field of type '" + field.type.typeName() +
                                        "' in struct '" + curStruct.name + "'.";
+            LOG_S(ERROR) << errorMessage;
             throw UnImplementedException(errorMessage);
         }
         default:
@@ -163,7 +166,7 @@ void KleeConstraintsPrinter::genConstraintsForStruct(const ConstraintsState &sta
     }
 }
 
-std::string KleeConstraintsPrinter::cexConstraints(const std::string &name, const types::Type &type) {
+std::string KleeConstraintsPrinter::cexConstraints(const std::string &name, const types::Type &type, const std::vector<std::string>& names) {
     if (!CollectionUtils::containsKey(TypesHandler::preferredConstraints(), type.baseType())) {
         return "";
     }
@@ -173,6 +176,11 @@ std::string KleeConstraintsPrinter::cexConstraints(const std::string &name, cons
         ssCex << name << " " << constraints[i];
         if (i + 1 < constraints.size()) {
             ssCex << " & ";
+        }
+    }
+    for (const std::string& currentName: names){
+        if(name != currentName){
+            ssCex << " & " << name << " != " << currentName;
         }
     }
     return ssCex.str();

@@ -2,6 +2,7 @@
 
 #include "utils/StringUtils.h"
 #include "utils/CLIUtils.h"
+#include "loguru.h"
 #include "config.h"
 
 uint32_t Commands::threadsPerUser = 0;
@@ -9,19 +10,26 @@ uint32_t Commands::kleeProcessNumber = 0;
 
 Commands::MainCommands::MainCommands(CLI::App &app) {
     app.set_help_all_flag("--help-all", "Expand all help");
-    app.add_flag_function("--version", [](int count){
+    app.add_flag_function("--version", [](int count) {
         std::cout << PROJECT_NAME << " " << PROJECT_VERSION << std::endl;
         if (strlen(RUN_INFO)) {
             std::cout << "Build by " << RUN_INFO << std::endl;
         }
         exit(0);
     }, "Get UTBotCpp version and build detail");
+
+    app.add_option("-v,--verbosity", verbosity, "Logger verbosity.")
+            ->type_name(" ENUM:value in {" +
+                        StringUtils::joinWith(CollectionUtils::getKeys(verbosityMap), "|") + "}")
+            ->transform(CLI::CheckedTransformer(verbosityMap, CLI::ignore_case));
+    app.add_option("--log", logPath, "Path to folder with logs.");
+
     serverCommand = app.add_subcommand("server", "Launch UTBot server.");
     generateCommand =
-        app.add_subcommand("generate", "Generate unit tests and/or stubs.")->require_subcommand();
+            app.add_subcommand("generate", "Generate unit tests and/or stubs.")->require_subcommand();
     runTestsCommand = app.add_subcommand("run", "Launch unit tests and generate coverage info.");
     allCommand = app.add_subcommand(
-        "all", "Sequential launch of 'generate stubs' -> 'generate project' -> 'run'.");
+            "all", "Sequential launch of 'generate stubs' -> 'generate project' -> 'run'.");
     app.require_subcommand(0, 1);
 }
 
@@ -45,25 +53,20 @@ CLI::App *Commands::MainCommands::getAllCommand() {
 Commands::ServerCommandOptions::ServerCommandOptions(CLI::App *command) {
     command->add_option("-p,--port", port, "Port server run on.");
     command->add_option("-j", threadsPerUser, "Maximum number of threads per user.");
-    command->add_option("--log", logPath, "Path to folder with logs.");
-    command->add_option("-v,--verbosity", verbosity, "Logger verbosity.")
-        ->type_name(" ENUM:value in {" +
-                    StringUtils::joinWith(CollectionUtils::getKeys(verbosityMap), "|") + "}")
-        ->transform(CLI::CheckedTransformer(verbosityMap, CLI::ignore_case));
     command->add_option("--klee-process-number", kleeProcessNumber,
                         "Number of threads for KLEE in interactive mode");
 }
 
-fs::path Commands::ServerCommandOptions::getLogPath() {
+fs::path Commands::MainCommands::getLogPath() {
     return logPath;
+}
+
+loguru::NamedVerbosity Commands::MainCommands::getVerbosity() {
+    return verbosity;
 }
 
 unsigned int Commands::ServerCommandOptions::getPort() {
     return port;
-}
-
-loguru::NamedVerbosity Commands::ServerCommandOptions::getVerbosity() {
-    return verbosity;
 }
 
 unsigned int Commands::ServerCommandOptions::getThreadsPerUser() {
@@ -74,12 +77,12 @@ unsigned int Commands::ServerCommandOptions::getKleeProcessNumber() {
     return kleeProcessNumber;
 }
 
-const std::map<std::string, loguru::NamedVerbosity> Commands::ServerCommandOptions::verbosityMap = {
-    { "trace", loguru::NamedVerbosity::Verbosity_MAX },
-    { "debug", loguru::NamedVerbosity::Verbosity_1 },
-    { "info", loguru::NamedVerbosity::Verbosity_INFO },
-    { "warning", loguru::NamedVerbosity::Verbosity_WARNING },
-    { "error", loguru::NamedVerbosity::Verbosity_ERROR }
+const std::map<std::string, loguru::NamedVerbosity> Commands::MainCommands::verbosityMap = {
+        {"trace",   loguru::NamedVerbosity::Verbosity_MAX},
+        {"debug",   loguru::NamedVerbosity::Verbosity_1},
+        {"info",    loguru::NamedVerbosity::Verbosity_INFO},
+        {"warning", loguru::NamedVerbosity::Verbosity_WARNING},
+        {"error",   loguru::NamedVerbosity::Verbosity_ERROR}
 };
 
 
@@ -105,9 +108,9 @@ Commands::GenerateCommands::GenerateCommands(CLI::App *command) {
     classCommand = generateCommand->add_subcommand("class", "Generate tests for C++ class.");
     lineCommand = generateCommand->add_subcommand("line", "Generate tests for line in file.");
     assertionCommand =
-        generateCommand->add_subcommand("assertion", "Generate tests that fails assertion.");
+            generateCommand->add_subcommand("assertion", "Generate tests that fails assertion.");
     predicateCommand =
-        generateCommand->add_subcommand("predicate", "Generate tests with given result.");
+            generateCommand->add_subcommand("predicate", "Generate tests with given result.");
 }
 
 CLI::App *Commands::GenerateCommands::getProjectCommand() {
@@ -203,62 +206,62 @@ Commands::GenerateCommandsOptions::GenerateCommandsOptions(GenerateCommands &gen
     generateCommands.getPredicateCommand()->add_option(srcPathsFlag, srcPaths, srcPathsDescription);
     // file path
     generateCommands.getSnippetCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getFileCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getLineCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getFunctionCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getClassCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getAssertionCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
     generateCommands.getPredicateCommand()
-        ->add_option(filePathFlag, filePath, filePathDescription)
-        ->required();
+            ->add_option(filePathFlag, filePath, filePathDescription)
+            ->required();
 
     // folder path
     generateCommands.getFolderCommand()
-        ->add_option(folderPathFlag, folderPath, folderPathDescription)
-        ->required();
+            ->add_option(folderPathFlag, folderPath, folderPathDescription)
+            ->required();
 
     // line number
     generateCommands.getLineCommand()
-        ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
-        ->required();
+            ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
+            ->required();
     generateCommands.getFunctionCommand()
-        ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
-        ->required();
+            ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
+            ->required();
     generateCommands.getClassCommand()
-        ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
-        ->required();
+            ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
+            ->required();
     generateCommands.getAssertionCommand()
-        ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
-        ->required();
+            ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
+            ->required();
     generateCommands.getPredicateCommand()
-        ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
-        ->required();
+            ->add_option(lineNumberFlag, lineNumber, lineNumberDescription)
+            ->required();
 
     // predicate info
     generateCommands.getPredicateCommand()
-        ->add_option("--validation-type", type, "Type of predicate values.")
-        ->required()
-        ->type_name(" ENUM:value in {" +
-                    StringUtils::joinWith(CollectionUtils::getKeys(validationTypeMap), "|") + "}")
-        ->transform(CLI::CheckedTransformer(validationTypeMap, CLI::ignore_case));
+            ->add_option("--validation-type", type, "Type of predicate values.")
+            ->required()
+            ->type_name(" ENUM:value in {" +
+                        StringUtils::joinWith(CollectionUtils::getKeys(validationTypeMap), "|") + "}")
+            ->transform(CLI::CheckedTransformer(validationTypeMap, CLI::ignore_case));
     generateCommands.getPredicateCommand()
-        ->add_option("--predicate", predicate, "Predicate string representation.")
-        ->required();
+            ->add_option("--predicate", predicate, "Predicate string representation.")
+            ->required();
     generateCommands.getPredicateCommand()
-        ->add_option("--return-value", returnValue, "Expected return value.")
-        ->required();
+            ->add_option("--return-value", returnValue, "Expected return value.")
+            ->required();
 
     // target
     generateCommands.getProjectCommand()->add_option(targetFlag, target, targetDescription);
@@ -304,34 +307,42 @@ std::optional<std::string> Commands::GenerateBaseCommandsOptions::getTarget() co
 }
 
 const std::map<std::string, testsgen::ValidationType>
-    Commands::GenerateCommandsOptions::validationTypeMap = {
-        { "int8", testsgen::ValidationType::INT8_T },
-        { "int16", testsgen::ValidationType::INT16_T },
-        { "int32", testsgen::ValidationType::INT32_T },
-        { "int64", testsgen::ValidationType::INT64_T },
-        { "uint8", testsgen::ValidationType::UINT8_T },
-        { "uint16", testsgen::ValidationType::UINT16_T },
-        { "uint32", testsgen::ValidationType::UINT32_T },
-        { "uint64", testsgen::ValidationType::UINT64_T },
-        { "bool", testsgen::ValidationType::BOOL },
-        { "char", testsgen::ValidationType::CHAR },
-        { "float", testsgen::ValidationType::FLOAT },
-        { "string", testsgen::ValidationType::STRING }
-    };
+        Commands::GenerateCommandsOptions::validationTypeMap = {
+        {"int8",   testsgen::ValidationType::INT8_T},
+        {"int16",  testsgen::ValidationType::INT16_T},
+        {"int32",  testsgen::ValidationType::INT32_T},
+        {"int64",  testsgen::ValidationType::INT64_T},
+        {"uint8",  testsgen::ValidationType::UINT8_T},
+        {"uint16", testsgen::ValidationType::UINT16_T},
+        {"uint32", testsgen::ValidationType::UINT32_T},
+        {"uint64", testsgen::ValidationType::UINT64_T},
+        {"bool",   testsgen::ValidationType::BOOL},
+        {"char",   testsgen::ValidationType::CHAR},
+        {"float",  testsgen::ValidationType::FLOAT},
+        {"string", testsgen::ValidationType::STRING}
+};
 
 Commands::ProjectContextOptionGroup::ProjectContextOptionGroup(CLI::App *command) {
     projectContextOptions = command->add_option_group("Project context");
     projectContextOptions
-        ->add_option("-p,--project-path", projectPath, "Path to testing project root.")
-        ->required();
+            ->add_option("-p,--project-path", projectPath, "Path to testing project root.")
+            ->required();
 
     projectContextOptions->add_option(
-        "-t,--tests-dir", testDir, "Relative path to directory in which tests will be generated.",
-        true);
+            "-t,--tests-dir", testRelDir, "Relative path to directory in which tests will be generated.",
+            true);
 
     projectContextOptions->add_option(
-        "-b,--build-dir", buildDir,
-        "Relative path to build directory with compile_commands.json and/or coverage.json.", true);
+            "-r,--report-dir", reportRelDir, "Relative path to directory in which sarif report will be generated.",
+            true);
+
+    projectContextOptions->add_option(
+            "-b,--build-dir", buildRelDir,
+            "Relative path to build directory with compile_commands.json and/or coverage.json.", true);
+
+    projectContextOptions->add_option(
+            "-i,--init-teardown-path", itfRelPath,
+            "Relative paths to json, that contains list of initial and teardown functions", true);
 }
 
 CLI::Option_group *Commands::ProjectContextOptionGroup::getProjectContextOptions() const {
@@ -350,18 +361,26 @@ fs::path Commands::ProjectContextOptionGroup::getProjectPath() const {
 }
 
 std::string Commands::ProjectContextOptionGroup::getTestDirectory() const {
-    return testDir;
+    return testRelDir;
+}
+
+std::string Commands::ProjectContextOptionGroup::getReportDirectory() const {
+    return reportRelDir;
 }
 
 std::string Commands::ProjectContextOptionGroup::getBuildDirectory() const {
-    return buildDir;
+    return buildRelDir;
+}
+
+std::string Commands::ProjectContextOptionGroup::getItfRelPath() const {
+    return itfRelPath;
 }
 
 Commands::SettingsContextOptionGroup::SettingsContextOptionGroup(CLI::App *command) {
     settingsContextOptions = command->add_option_group("Settings context");
     settingsContextOptions->add_flag(
-        "-g,--generate-for-static", generateForStaticFunctions,
-        "True, if you want UTBot to generate tests for static functions.");
+            "-g,--generate-for-static", generateForStaticFunctions,
+            "True, if you want UTBot to generate tests for static functions.");
     settingsContextOptions->add_flag("-v,--verbose", verbose,
                                      "Set if is required.");
     settingsContextOptions->add_option("--function-timeout", timeoutPerFunction,
@@ -408,6 +427,18 @@ bool Commands::SettingsContextOptionGroup::withStubs() const {
     return !noStubs;
 }
 
+ErrorMode Commands::SettingsContextOptionGroup::getErrorMode() const {
+    return errorMode;
+}
+
+bool Commands::SettingsContextOptionGroup::doDifferentVariablesOfTheSameType() const {
+    return differentVariablesOfTheSameType;
+}
+
+bool Commands::SettingsContextOptionGroup::getSkipObjectWithoutSource() const {
+    return skipObjectWithoutSource;
+}
+
 Commands::RunTestsCommands::RunTestsCommands(Commands::MainCommands &commands) {
     runCommand = commands.getRunTestsCommand();
 
@@ -444,11 +475,11 @@ Commands::RunTestsCommandOptions::RunTestsCommandOptions(Commands::RunTestsComma
     commands.getRunTestCommand()->add_option("--test-suite", testSuite, "Test suite")->required();
     commands.getRunTestCommand()->add_option("--test-name", testName, "Test name")->required();
     commands.getRunTestCommand()
-        ->add_option("--file-path", filePath, "Path to test file")
-        ->required();
+            ->add_option("--file-path", filePath, "Path to test file")
+            ->required();
     commands.getRunFileCommand()
-        ->add_option("--file-path", filePath, "Path to test file")
-        ->required();
+            ->add_option("--file-path", filePath, "Path to test file")
+            ->required();
     commands.getRunTestCommand()->add_flag("--no-coverage", noCoverage,
                                            "Flag that controls coverage generation.");
     commands.getRunFileCommand()->add_flag("--no-coverage", noCoverage,

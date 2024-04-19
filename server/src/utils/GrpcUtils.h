@@ -10,14 +10,18 @@
 #include <memory>
 #include <utility>
 
+using namespace ::testsgen;
+
 namespace GrpcUtils {
     extern const std::string UTBOT_AUTO_TARGET_PATH;
 
     std::unique_ptr<testsgen::ProjectContext>
     createProjectContext(const std::string &projectName,
                          const fs::path &projectPath,
-                         const fs::path &testDirPath,
-                         const fs::path &buildDirRelativePath);
+                         const fs::path &testDirRelPath,
+                         const fs::path &reportDirRelPath,
+                         const fs::path &buildDirRelPath,
+                         const fs::path &itfRelPath);
 
     std::unique_ptr<testsgen::SettingsContext>
     createSettingsContext(bool generateForStaticFunctions,
@@ -25,7 +29,10 @@ namespace GrpcUtils {
                           int32_t timeoutPerFunction,
                           int32_t timeoutPerTest,
                           bool useDeterministicSearcher,
-                          bool useStubs);
+                          bool useStubs,
+                          ErrorMode errorMode,
+                          bool differentVariablesOfTheSameType,
+                          bool skipObjectWithoutSource);
 
     std::unique_ptr<testsgen::SnippetRequest>
     createSnippetRequest(std::unique_ptr<testsgen::ProjectContext> projectContext,

@@ -15,30 +15,39 @@ FunctionDeclsMatchCallback::FunctionDeclsMatchCallback(const Fetcher *parent,
                                                        bool onlyNames,
                                                        bool toResolveReturnTypes,
                                                        bool onlyReturnTypes)
-    : parent(parent), typesResolver(parent), onlyNames(onlyNames),
-      toResolveReturnTypes(toResolveReturnTypes), onlyReturnTypes(onlyReturnTypes) {
+        : parent(parent), typesResolver(parent), onlyNames(onlyNames),
+          toResolveReturnTypes(toResolveReturnTypes), onlyReturnTypes(onlyReturnTypes) {
 }
 
 void FunctionDeclsMatchCallback::run(const MatchFinder::MatchResult &Result) {
     ExecUtils::throwIfCancelled();
-    if (const auto *FS = Result.Nodes.getNodeAs<FunctionDecl>(Matchers::FUNCTION_DEF)) {
+    if (const FunctionDecl *FS = ClangUtils::getFunctionOrConstructor(Result)) {
+        if (FS->isTemplated()) {
+            return;
+        }
         ExecUtils::throwIfCancelled();
-
         SourceManager &sourceManager = Result.Context->getSourceManager();
-        fs::path sourceFilePath = sourceManager.getFileEntryForID(sourceManager.getMainFileID())
-                                      ->tryGetRealPathName()
-                                      .str();
+        fs::path sourceFilePath = ClangUtils::getSourceFilePath(sourceManager);
 
-        std::string methodName = FS->getNameAsString();
         Tests::MethodDescription methodDescription;
+        if (const CXXConstructorDecl *CS = ClangUtils::getConstructor(Result)) {
+            methodDescription.constructorInfo = CS->isMoveConstructor() ? Tests::ConstructorInfo::MOVE_CONSTRUCTOR
+                                                                        : Tests::ConstructorInfo::CONSTRUCTOR;
+        }
+
+        std::string methodName = FS->getQualifiedNameAsString();
+        std::string enumReturnTypeName = PrinterUtils::getEnumReturnMangledTypeName(methodName);
         methodDescription.name = methodName;
+        methodDescription.callName = ClangUtils::getCallName(FS);
         methodDescription.sourceFilePath = sourceFilePath;
         if (onlyNames) {
             addMethod(sourceFilePath, methodDescription);
             return;
         }
-        const clang::QualType realReturnType = FS->getReturnType().getCanonicalType();
+        clang::QualType realReturnType = ClangUtils::getReturnType(FS, Result);
         methodDescription.returnType = ParamsHandler::getType(realReturnType, realReturnType, sourceManager);
+        methodDescription.returnType.replaceTypeNameIfUnnamed(enumReturnTypeName);
+        methodDescription.accessSpecifier = types::AS_pubic;
         if (onlyReturnTypes) {
             addMethod(sourceFilePath, methodDescription);
             return;
@@ -49,32 +58,35 @@ void FunctionDeclsMatchCallback::run(const MatchFinder::MatchResult &Result) {
         // we find declaration of the function from header
         const auto *FSFromHeader = FS->getFirstDecl();
         auto functionDeclHeaderLocation =
-            sourceManager.getExpansionLoc(FSFromHeader->getLocation());
+                sourceManager.getExpansionLoc(FSFromHeader->getLocation());
         auto path = fs::path(sourceManager.getFilename(functionDeclHeaderLocation).str());
         bool isHeader = Paths::isHeaderFile(path);
         if (!isHeader) {
             LOG_S(DEBUG) << "Didn't find any header with declaration of function " << methodName;
         }
 
-        auto *nodeParent = (CXXRecordDecl *)FS->getParent();
-        if (FS->isCXXClassMember()) {
+        auto *nodeParent = (CXXRecordDecl *) FS->getParent();
+
+        if (FS->isCXXClassMember() && !methodDescription.isConstructor()) {
             std::string className = nodeParent->getNameAsString();
             const clang::QualType clangClassType = nodeParent->getTypeForDecl()->getCanonicalTypeInternal();
             auto classType = ParamsHandler::getType(clangClassType, clangClassType, sourceManager);
-            methodDescription.classObj = { classType,
-                                           classType.typeName() + "_obj",
-                                           std::nullopt };
+            methodDescription.classObj = {classType,
+                                          classType.typeName() + "_obj",
+                                          std::nullopt};
+            methodDescription.accessSpecifier = getAcessSpecifier(FS);
         }
         methodDescription.returnType = ParamsHandler::getType(realReturnType, realReturnType, sourceManager);
+        methodDescription.returnType.replaceTypeNameIfUnnamed(enumReturnTypeName);
         methodDescription.hasIncompleteReturnType = ClangUtils::isIncomplete(realReturnType);
         if (toResolveReturnTypes) {
             typesResolver.resolve(realReturnType);
         }
         auto returnVarName =
-            NameDecorator::decorate(PrinterUtils::getReturnMangledName(methodName));
+                NameDecorator::decorate(PrinterUtils::getReturnMangledName(methodName));
         const QualType pType = realReturnType->getPointeeType();
         if (pType.getTypePtrOrNull()) {
-                addFunctionPointer(methodDescription.functionPointers,
+            addFunctionPointer(methodDescription.functionPointers,
                                pType->getAs<clang::FunctionType>(), realReturnType,
                                returnVarName, sourceManager, methodDescription.returnType);
         }
@@ -83,11 +95,12 @@ void FunctionDeclsMatchCallback::run(const MatchFinder::MatchResult &Result) {
         methodDescription.modifiers.isInline = FS->isInlined();
         methodDescription.isVariadic = FS->isVariadic();
         methodDescription.paramsString =
-            ASTPrinter::getSourceText(FS->getParametersSourceRange(), sourceManager);
+                ASTPrinter::getSourceText(FS->getParametersSourceRange(), sourceManager);
         if (FS->hasBody() && parent->fetchFunctionBodies) {
             methodDescription.sourceBody =
-                ASTPrinter::getSourceText(FS->getBody()->getSourceRange(), sourceManager);
+                    ASTPrinter::getSourceText(FS->getBody()->getSourceRange(), sourceManager);
         }
+
 
         const auto paramsFromDefinition = FS->parameters();
         const auto paramsFromDeclaration = FSFromHeader->parameters();
@@ -149,18 +162,27 @@ void FunctionDeclsMatchCallback::logFunction(const Tests::MethodDescription &des
 }
 
 void FunctionDeclsMatchCallback::addFunctionPointer(
-    tests::Tests::MethodDescription::FPointerMap &functionPointers,
-    const clang::FunctionType *functionType,
-    const clang::QualType &qualType,
-    const std::string &name,
-    const clang::SourceManager &sourceManager,
-    const types::Type &type) {
+        tests::Tests::MethodDescription::FPointerMap &functionPointers,
+        const clang::FunctionType *functionType,
+        const clang::QualType &qualType,
+        const std::string &name,
+        const clang::SourceManager &sourceManager,
+        const types::Type &type) {
     if (type.isPointerToFunction()) {
-        functionPointers[name] = ParamsHandler::getFunctionPointerDeclaration(functionType, name, sourceManager,
-                                                            false);
+        if (functionType) {
+            functionPointers[name] = ParamsHandler::getFunctionPointerDeclaration(functionType, name, sourceManager,
+                                                                                  false);
+        } else {
+            LOG_S(WARNING) << "Type '" << name << "' fetch as function pointer but can't get functionType";
+        }
     } else if (type.isArrayOfPointersToFunction()) {
-        functionPointers[name] = ParamsHandler::getFunctionPointerDeclaration(
-            qualType->getPointeeType()->getPointeeType()->getAs<clang::FunctionType>(), name,
-            sourceManager, true);
+        const clang::FunctionType *functionType = qualType->getPointeeType()->getPointeeType()->getAs<clang::FunctionType>();
+        if (functionType) {
+            functionPointers[name] = ParamsHandler::getFunctionPointerDeclaration(
+                    functionType, name,
+                    sourceManager, true);
+        } else {
+            LOG_S(WARNING) << "Type '" << name << "' fetch as function pointer but can't get functionType";
+        }
     }
 }

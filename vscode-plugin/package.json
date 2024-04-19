@@ -470,11 +470,11 @@
 					"default": "",
 					"markdownDescription": "%unittestbot.deployment.remotePath.description%"
 				},
-				"unittestbot.paths.buildDirectory": {
+				"unittestbot.paths.buildRelDirectory": {
 					"type": "string",
 					"default": "build",
 					"minLength": 1,
-					"markdownDescription": "%unittestbot.paths.buildDirectory.description%"
+					"markdownDescription": "%unittestbot.paths.buildRelDirectory.description%"
 				},
 				"unittestbot.paths.cmakeOptions": {
 					"type": "array",
@@ -487,16 +487,27 @@
 					],
 					"markdownDescription": "%unittestbot.paths.cmakeOptions.description%"
 				},
-				"unittestbot.paths.testsDirectory": {
+				"unittestbot.paths.testsRelDirectory": {
 					"type": "string",
 					"default": "tests",
 					"minLength": 1,
-					"markdownDescription": "%unittestbot.paths.testsDirectory.description%"
+					"markdownDescription": "%unittestbot.paths.testsRelDirectory.description%"
+				},
+				"unittestbot.paths.reportRelDirectory": {
+					"type": "string",
+					"default": "utbot_report",
+					"minLength": 1,
+					"markdownDescription": "%unittestbot.paths.reportRelDirectory.description%"
 				},
 				"unittestbot.paths.sourceDirectories": {
 					"type": "string",
 					"default": "",
 					"markdownDescription": "%unittestbot.paths.sourceDirectories.description%"
+				},
+				"unittestbot.paths.itfRel": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "%unittestbot.paths.itfRel.description%"
 				},
 				"unittestbot.testsGeneration.verboseFormatting": {
 					"type": "boolean",
@@ -507,6 +518,26 @@
 					"type": "boolean",
 					"default": true,
 					"markdownDescription": "%unittestbot.testsGeneration.generateForStaticFunctions.description%"
+				},
+				"unittestbot.testsGeneration.differentVariablesOfTheSameType": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "%unittestbot.testsGeneration.differentVariablesOfTheSameType.description%"
+				},
+				"unittestbot.testsGeneration.skipObjectWithoutSource": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "%unittestbot.testsGeneration.skipObjectWithoutSource.description%"
+				},
+				"unittestbot.testsGeneration.errorMode": {
+					"type": "string",
+					"enum": [
+						"Failing",
+						"Passing"
+					],
+					"default": "Failing",
+					"markdownDescription": "%unittestbot.testsGeneration.errorMode.description%",
+					"scope": "window"
 				},
 				"unittestbot.visual.showTestResults": {
 					"type": "boolean",
@@ -563,15 +594,15 @@
 		"@vscode/test-electron": "2.1.2",
 		"eslint": "6.8.0",
 		"glob": "7.2.0",
-		"mocha": "9.2.0"
+		"mocha": "^9.2.2"
 	},
 	"dependencies": {
 		"@types/google-protobuf": "3.15.5",
 		"@types/node": "15.6.0",
 		"@types/randomstring": "1.1.8",
 		"@types/ssh2": "1.11.6",
-		"@types/vscode": "1.64.0",
 		"@types/ssh2-streams": "0.1.9",
+		"@types/vscode": "1.64.0",
 		"emittery": "0.10.1",
 		"filepath": "1.1.0",
 		"google-protobuf": "3.12.4",
@@ -579,10 +610,10 @@
 		"grpc_tools_node_protoc_ts": "5.3.2",
 		"grpc-tools": "1.11.2",
 		"log4js": "6.5.2",
+		"node-ssh": "^13.0.0",
 		"randomstring": "1.2.2",
-		"ssh2-streams": "0.4.10",
 		"source-map-support": "0.5.21",
-		"typescript": "3.9.4",
-		"node-ssh": "^13.0.0"
+		"ssh2-streams": "0.4.10",
+		"typescript": "3.9.4"
 	}
 }

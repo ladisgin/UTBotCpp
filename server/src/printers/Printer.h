@@ -14,13 +14,13 @@
 #include <unordered_map>
 #include <vector>
 
-#define NL "\n"
-#define SCNL ";" NL
-#define BNL "{" NL
-#define IND "i"
-#define TAB "    "
-
 namespace printer {
+    const std::string NL = "\n";
+    const std::string SCNL = ";" + NL;
+    const std::string BNL = "{" + NL;
+    const std::string IND = "i";
+    const std::string TAB = "    ";
+
     using tests::Tests;
 
     class Printer {
@@ -29,7 +29,7 @@ namespace printer {
         typedef const std::vector<std::string> &VSRef;
         typedef std::stringstream &Stream;
 
-        std::stringstream ss;
+        std::stringstream ss{};
         int tabsDepth = 0;
         int commentDepth = 0;
         utbot::Language srcLanguage = utbot::Language::UNKNOWN;
@@ -53,8 +53,8 @@ namespace printer {
         inline std::string LINE_INDENT() const {
             std::string tabs = StringUtils::repeat(TAB, tabsDepth);
             return commentDepth <= 0
-               ? tabs
-               : tabs + "// ";
+                   ? tabs
+                   : tabs + "// ";
         }
 
         // all functions which return std::stringstream start with `str` prefix.
@@ -63,7 +63,8 @@ namespace printer {
         Stream strDefine(std::string_view from, std::string_view to);
 
         Stream strInclude(SRef header, bool isAngled = false);
-        Stream strInclude(const Include& include);
+
+        Stream strInclude(const Include &include);
 
 
         Stream strIncludeSystem(SRef header);
@@ -81,28 +82,37 @@ namespace printer {
 
         Stream strDeclareAbsError(SRef name);
 
-        Stream strDeclareArrayVar(const types::Type& type,
+        enum ExternType {
+            NONE,
+            SAME_LANGUAGE,
+            C
+        };
+
+        Stream strDeclareArrayVar(const types::Type &type,
                                   std::string_view name,
                                   types::PointerUsage usage,
                                   std::optional<std::string_view> value = std::nullopt,
                                   std::optional<uint64_t> alignment = std::nullopt,
-                                  bool complete = true);
+                                  bool complete = true,
+                                  ExternType externType = ExternType::NONE);
+
+        Stream strDeclareSetOfVars(const std::set<Tests::TypeAndVarName> &vars);
 
         Stream strAssignVar(std::string_view name, std::string_view value);
 
-        std::stringstream& checkOverflowStubArray(const std::string &cntCall);
+        std::stringstream &checkOverflowStubArray(const std::string &cntCall);
 
         Stream strTabIf(bool needTabs);
 
         Stream strFunctionDecl(
-            SRef returnType,
-            SRef functionName,
-            std::vector<types::Type> const& paramTypes = {},
-            VSRef paramValues = {},
-            SRef end = SCNL,
-            VSRef modifiers = {},
-            const tests::Tests::MethodDescription::FPointerMap &fullDeclSubstitutions = {},
-            bool isVariadic = false);
+                SRef returnType,
+                SRef functionName,
+                std::vector<types::Type> const &paramTypes = {},
+                VSRef paramValues = {},
+                SRef end = SCNL,
+                VSRef modifiers = {},
+                const tests::Tests::MethodDescription::FPointerMap &fullDeclSubstitutions = {},
+                bool isVariadic = false);
 
         Stream strFunctionDecl(const Tests::MethodDescription &method,
                                SRef end = SCNL,
@@ -153,7 +163,7 @@ namespace printer {
                                        std::optional<types::Type> castType = std::nullopt);
 
         template<typename... Args>
-        static std::string concat(Args&&... args) {
+        static std::string concat(Args &&... args) {
             std::stringstream cc_ss;
             (cc_ss << ... << args);
             return cc_ss.str();
@@ -176,11 +186,8 @@ namespace printer {
                                 const types::TypesHandler &typesHandler,
                                 const std::string &prefix,
                                 const std::string &suffix,
-                                const std::string &methodName,
-                                const std::string &nameForStub,
-                                bool makeStatic = false);
-
-        static std::string getStubSymbolicVarName(const std::string &methodName);
+                                const std::string &parentMethodName,
+                                bool makeStatic);
 
         Stream strKleeMakeSymbolic(SRef varName, bool needAmpersand, SRef pseudoName);
 
@@ -199,36 +206,39 @@ namespace printer {
                                        const std::string &end = "",
                                        bool needTabs = true);
 
-        std::stringstream &strFunctionDeclWithParamString(const Tests::MethodDescription &method,
-                                                          const std::string &end ,
-                                                          const std::vector<std::string> &modifiers = {});
-
-        void writeStubsForFunctionParams(const types::TypesHandler* typesHandler,
-                                         const Tests::MethodDescription& testMethod,
+        void writeStubsForFunctionParams(const types::TypesHandler *typesHandler,
+                                         const Tests::MethodDescription &testMethod,
                                          bool forKlee);
 
-        void writeExternForSymbolicStubs(const Tests::MethodDescription& testMethod);
+        void writeExternForSymbolicStubs(const Tests::MethodDescription &testMethod);
 
         void writeStubsForStructureFields(const Tests &tests);
 
         void writeStubsForParameters(const Tests &tests);
 
-        void writeStubForParam(const types::TypesHandler* typesHandler,
+        void writeStubForParam(const types::TypesHandler *typesHandler,
                                const std::shared_ptr<types::FunctionInfo> &fInfo,
                                const std::string &methodName,
                                const std::string &stubName, bool needToTypedef, bool makeStatic);
 
+        void writeAccessPrivateMacros(types::TypesHandler const *typesHandler, const Tests &tests, bool onlyChangeable,
+                                      const std::function<bool(tests::Tests::MethodDescription const &)> &methodFilter);
+
         void writeAccessPrivateMacros(types::TypesHandler const *typesHandler, const Tests &tests, bool onlyChangeable);
 
         void genStubForStructFunctionPointer(const std::string &structName,
-                                             const types::Field &ieldName,
+                                             const types::Field &fieldName,
                                              const std::string &stubName);
 
         void genStubForStructFunctionPointerArray(const std::string &structName,
                                                   const types::Field &fieldName,
                                                   const std::string &stubName);
 
-        static std::string getConstQualifier(const types::Type& type);
+        static std::string getConstQualifier(const types::Type &type);
+
+        void genInitCall(const tests::Tests::MethodDescription &testMethod);
+
+        void genTearDownCall(const tests::Tests::MethodDescription &testMethod);
 
     private:
         Stream strMemcpyImpl(std::string_view dest, std::string_view src, bool needDereference);

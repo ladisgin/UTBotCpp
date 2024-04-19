@@ -64,7 +64,11 @@ bool Synchronizer::isProbablyOutdatedStubs(const fs::path &srcFilePath) const {
     } catch (...) {
         return true;
     }
-    srcTimestamp = Synchronizer::getFileOutdatedTime(srcFilePath);
+    if (!fs::exists(srcFilePath)) {
+        srcTimestamp = time(nullptr);
+    } else {
+        srcTimestamp = Synchronizer::getFileOutdatedTime(srcFilePath);
+    }
     return stubTimestamp <= srcTimestamp;
 }
 
@@ -75,15 +79,20 @@ bool Synchronizer::isProbablyOutdatedWrappers(const fs::path &srcFilePath) const
     }
     long long wrapperTimestamp, srcTimestamp;
     wrapperTimestamp = Synchronizer::getFileOutdatedTime(wrapperFilePath);
-    srcTimestamp = Synchronizer::getFileOutdatedTime(srcFilePath);
+    if (!fs::exists(srcFilePath)) {
+        srcTimestamp = time(nullptr);
+    } else {
+        srcTimestamp = Synchronizer::getFileOutdatedTime(srcFilePath);
+    }
     return wrapperTimestamp <= srcTimestamp;
 }
 
 CollectionUtils::FileSet Synchronizer::getOutdatedSourcePaths() const {
-    auto allFiles = getTargetSourceFiles();
-    auto outdatedSources = CollectionUtils::filterOut(getTargetSourceFiles(), [this](fs::path const &sourcePath) {
-        return !isProbablyOutdatedWrappers(sourcePath);
-    });
+    auto allFiles = testGen->getTargetSourceFiles();
+    auto outdatedSources = CollectionUtils::filterOut(testGen->getTargetSourceFiles(),
+                                                      [this](fs::path const &sourcePath) {
+                                                          return !isProbablyOutdatedWrappers(sourcePath);
+                                                      });
     return outdatedSources;
 }
 
@@ -101,7 +110,10 @@ bool Synchronizer::removeStubIfSourceAbsent(const StubOperator &stub) const {
             fs::remove(stub.getStubPath(testGen->projectContext));
             return true;
         } catch (const fs::filesystem_error &e) {
-            std::string message = StringUtils::stringFormat("Failed to delete stub file '%s'", stub.getStubPath(testGen->projectContext));
+            std::string message = StringUtils::stringFormat("Failed to delete stub file: '%s'",
+                                                            stub.getStubPath(testGen->projectContext));
+            LOG_S(ERROR) << message
+                         << e.what();
             throw FileSystemException(message, e);
         }
         return false;
@@ -142,7 +154,7 @@ void Synchronizer::synchronize(const types::TypesHandler &typesHandler) {
         synchronizeStubs(outdatedStubs, typesHandler);
     }
     auto outdatedSourcePaths = getOutdatedSourcePaths();
-    synchronizeWrappers(outdatedSourcePaths);
+    synchronizeWrappers(outdatedSourcePaths, typesHandler);
 }
 
 void Synchronizer::synchronizeStubs(StubSet &outdatedStubs,
@@ -183,24 +195,23 @@ void Synchronizer::synchronizeStubs(StubSet &outdatedStubs,
 
     auto sourceToHeaderRewriter =
     SourceToHeaderRewriter(testGen->projectContext, testGen->getProjectBuildDatabase()->compilationDatabase,
-                           stubFetcher.getStructsToDeclare(), testGen->serverBuildDir);
+                           stubFetcher.getStructsToDeclare(), testGen->serverBuildDir, typesHandler);
 
     for (const StubOperator &outdatedStub : outdatedStubs) {
         fs::path stubPath = outdatedStub.getStubPath(testGen->projectContext);
         Tests const &methodDescription = stubFilesMap[stubPath];
+        tests::Tests tests = StubGen::mergeSourceFileIntoStub(
+                methodDescription, sourceFilesMap.at(outdatedStub.getSourceFilePath()));
         if (outdatedStub.isHeader()) {
-            std::string code = sourceToHeaderRewriter.generateStubHeader(outdatedStub.getSourceFilePath());
+            std::string code = sourceToHeaderRewriter.generateStubHeader(tests, outdatedStub.getSourceFilePath());
             testGen->synchronizedStubs.emplace_back(stubPath, code);
         } else {
-            tests::Tests newStubFile = StubGen::mergeSourceFileIntoStub(
-                methodDescription, sourceFilesMap.at(outdatedStub.getSourceFilePath()));
             printer::StubsPrinter stubsPrinter(Paths::getSourceLanguage(stubPath));
-            Stubs stubFile =
-                stubsPrinter.genStubFile(newStubFile, typesHandler, testGen->projectContext);
+            Stubs stubFile = stubsPrinter.genStubFile(tests, typesHandler, testGen->projectContext);
             testGen->synchronizedStubs.emplace_back(stubFile);
         }
     }
-    StubsWriter::writeStubsFilesOnServer(testGen->synchronizedStubs, testGen->projectContext.testDirPath);
+    StubsWriter::writeStubsFilesOnServer(testGen->synchronizedStubs, testGen->projectContext.getTestDirAbsPath());
 }
 
 std::shared_ptr<CompilationDatabase>
@@ -213,9 +224,10 @@ Synchronizer::createStubsCompilationDatabase(StubSet &stubFiles,
     return CompilationUtils::getCompilationDatabase(ccJsonStubDirPath);
 }
 
-void Synchronizer::synchronizeWrappers(const CollectionUtils::FileSet &outdatedSourcePaths) const {
+void Synchronizer::synchronizeWrappers(const CollectionUtils::FileSet &outdatedSourcePaths,
+                                       const types::TypesHandler &typesHandler) const {
     auto sourceFilesNeedToRegenerateWrappers = outdatedSourcePaths;
-    for (fs::path const &sourceFilePath : getTargetSourceFiles()) {
+    for (fs::path const &sourceFilePath: testGen->getTargetSourceFiles()) {
         if (!CollectionUtils::contains(sourceFilesNeedToRegenerateWrappers, sourceFilePath)) {
             auto wrapperFilePath =
                 Paths::getWrapperFilePath(testGen->projectContext, sourceFilePath);
@@ -226,21 +238,13 @@ void Synchronizer::synchronizeWrappers(const CollectionUtils::FileSet &outdatedS
     }
     ExecUtils::doWorkWithProgress(
         sourceFilesNeedToRegenerateWrappers, testGen->progressWriter,
-        "Generating wrappers", [this](fs::path const &sourceFilePath) {
+        "Generating wrappers", [this, &typesHandler](fs::path const &sourceFilePath) {
             SourceToHeaderRewriter sourceToHeaderRewriter(testGen->projectContext,
                                                           testGen->getProjectBuildDatabase()->compilationDatabase, nullptr,
-                                                          testGen->serverBuildDir);
+                                                          testGen->serverBuildDir, typesHandler);
             std::string wrapper = sourceToHeaderRewriter.generateWrapper(sourceFilePath);
             printer::SourceWrapperPrinter(Paths::getSourceLanguage(sourceFilePath)).print(testGen->projectContext, sourceFilePath, wrapper);
         });
-}
-
-const CollectionUtils::FileSet &Synchronizer::getTargetSourceFiles() const {
-    return testGen->getTargetBuildDatabase()->compilationDatabase->getAllFiles();
-}
-
-const CollectionUtils::FileSet &Synchronizer::getProjectSourceFiles() const {
-    return testGen->getProjectBuildDatabase()->compilationDatabase->getAllFiles();
 }
 
 StubSet Synchronizer::getStubsFiles() const {
@@ -249,13 +253,13 @@ StubSet Synchronizer::getStubsFiles() const {
 
 void Synchronizer::prepareDirectory(const fs::path &stubDirectory) {
     fs::create_directories(stubDirectory);
-    for (const auto &entry : fs::recursive_directory_iterator(stubDirectory)) {
+    for (const auto &entry: fs::recursive_directory_iterator(stubDirectory)) {
         if (entry.is_regular_file()) {
             fs::path stubPath = entry.path();
             if (!Paths::isHeaderFile(stubPath)) {
                 fs::path sourcePath =
-                    Paths::stubPathToSourcePath(testGen->projectContext, stubPath);
-                if (!CollectionUtils::contains(getProjectSourceFiles(), sourcePath)) {
+                        Paths::stubPathToSourcePath(testGen->projectContext, stubPath);
+                if (!CollectionUtils::contains(testGen->getProjectSourceFiles(), sourcePath)) {
                     LOG_S(DEBUG) << "Found extra file in stub directory: " << stubPath
                                  << ". Removing it.";
                     fs::remove(stubPath);

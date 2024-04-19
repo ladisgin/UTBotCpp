@@ -9,14 +9,14 @@ Features demonstration in 5 min (click to see on [YouTube](https://www.youtube.c
 
 [![UTBot C/C++ Demo](https://img.youtube.com/vi/bDJyWEeYhvk/0.jpg)](https://www.youtube.com/watch?v=bDJyWEeYhvk "UTBot C/C++ Demo")
 
-### Try online demo here: https://www.utbot.org/utbot
+### Try UTBot demo online [here](https://www.utbot.org/demo/?language=C)!
 
 More info on [wiki](https://github.com/UnitTestBot/UTBotCpp/wiki)
 
 
 ## How to install and use UTBot
 
-For now, you can only use UTBot under Ubuntu 18.04 and above.
+For now, you can only use UTBot under Ubuntu 20.04 and above.
 Navigate to the [**Releases**](https://github.com/UnitTestBot/UTBotCpp/releases) GitHub page and download last version of UTBot.
 
 UTBot is distrbuted as an archive that contains:

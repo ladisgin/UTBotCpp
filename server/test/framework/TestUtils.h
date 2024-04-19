@@ -20,6 +20,7 @@ using ReturnValue = const std::shared_ptr<tests::AbstractValueView> &;
 using TestCasePredicate = std::function<bool(tests::Tests::MethodTestCase)>;
 using CoverageLines = CollectionUtils::MapFileTo<std::set<int>>;
 using StatusCountMap = std::unordered_map<testsgen::TestStatus, int>;
+using TestCountMap = std::map<std::string, size_t>;
 
 namespace testUtils {
     enum BuildCommandsTool {
@@ -40,11 +41,13 @@ namespace testUtils {
                        const CoverageLines &expectedLinesUncovered,
                        const CoverageLines &expectedLinesNone);
 
-    void checkStatuses(const Coverage::TestResultMap &testResultMap, const std::vector<UnitTest> &tests);
+    void checkStatuses(const Coverage::TestResultMap &testResultMap, const std::vector<UnitTest> &tests,
+                       ErrorMode errorMode = ErrorMode::FAILING);
 
     void checkStatusesCount(const Coverage::TestResultMap &testResultsMap,
                             const std::vector<UnitTest> &tests,
-                            const StatusCountMap &expectedStatusCountMap);
+                            const StatusCountMap &expectedStatusCountMap,
+                            bool onlyPassed = true);
 
     size_t getNumberOfTests(const tests::TestsMap &tests);
 
@@ -57,65 +60,75 @@ namespace testUtils {
 
     void checkNumberOfTestsInFile(const BaseTestGen &testGen, std::string fileName, size_t number);
 
-    void
-    checkMinNumberOfTestsInFile(const BaseTestGen &testGen, std::string fileName, size_t number);
+    void checkMinNumberOfTestsInFile(const BaseTestGen &testGen, std::string fileName, size_t number);
+
+    void checkMinNumberOfTests(const tests::TestsMap &tests, const TestCountMap &expectedTestCountMap);
 
     std::unique_ptr<SnippetRequest> createSnippetRequest(const std::string &projectName,
                                                          const fs::path &projectPath,
-                                                         const fs::path &filePath);
+                                                         const fs::path &filePath,
+                                                         ErrorMode errorMode = ErrorMode::FAILING);
 
     std::unique_ptr<ProjectRequest> createProjectRequest(const std::string &projectName,
                                                          const fs::path &projectPath,
-                                                         const std::string &buildDirRelativePath,
+                                                         const std::string &buildDirRelPath,
                                                          const std::vector<fs::path> &srcPaths,
+                                                         const fs::path &itfRelPath = "",
                                                          const std::string &targetOrSourcePath = GrpcUtils::UTBOT_AUTO_TARGET_PATH,
                                                          bool useStubs = false,
                                                          bool verbose = true,
-                                                         int kleeTimeout = 60);
+                                                         int kleeTimeout = 60,
+                                                         ErrorMode errorMode = ErrorMode::FAILING,
+                                                         bool differentVariables = false,
+                                                         bool skipPrecompiled = false);
 
     std::unique_ptr<FileRequest> createFileRequest(const std::string &projectName,
                                                    const fs::path &projectPath,
-                                                   const std::string &buildDirRelativePath,
+                                                   const std::string &buildDirRelPath,
                                                    const std::vector<fs::path> &srcPaths,
                                                    const fs::path &filePath,
                                                    const std::string &targetOrSourcePath = GrpcUtils::UTBOT_AUTO_TARGET_PATH,
                                                    bool useStubs = false,
                                                    bool verbose = true,
-                                                   int kleeTimeout = 60);
+                                                   int kleeTimeout = 60,
+                                                   ErrorMode errorMode = ErrorMode::FAILING);
 
     std::unique_ptr<LineRequest> createLineRequest(const std::string &projectName,
                                                    const fs::path &projectPath,
-                                                   const std::string &buildDirRelativePath,
+                                                   const std::string &buildDirRelPath,
                                                    const std::vector<fs::path> &srcPaths,
                                                    const fs::path &filePath,
                                                    int line,
+                                                   const fs::path &itfRelPath = "",
                                                    const std::string &targetOrSourcePath = GrpcUtils::UTBOT_AUTO_TARGET_PATH,
                                                    bool useStubs = false,
                                                    bool verbose = true,
-                                                   int kleeTimeout = 60);
+                                                   int kleeTimeout = 60,
+                                                   ErrorMode errorMode = ErrorMode::FAILING);
 
     std::unique_ptr<ClassRequest> createClassRequest(const std::string &projectName,
                                                      const fs::path &projectPath,
-                                                     const std::string &buildDirRelativePath,
+                                                     const std::string &buildDirRelPath,
                                                      const std::vector<fs::path> &srcPaths,
                                                      const fs::path &filePath,
                                                      int line,
                                                      const std::string &targetOrSourcePath = GrpcUtils::UTBOT_AUTO_TARGET_PATH,
                                                      bool useStubs = false,
                                                      bool verbose = true,
-                                                     int kleeTimeout = 60);
+                                                    int kleeTimeout = 60,
+                                                     ErrorMode errorMode = ErrorMode::FAILING);
 
     std::unique_ptr<CoverageAndResultsRequest>
     createCoverageAndResultsRequest(const std::string &projectName,
                                     const fs::path &projectPath,
-                                    const fs::path &testDirPath,
-                                    const fs::path &buildDirRelativePath);
+                                    const fs::path &testDirRelPath,
+                                    const fs::path &buildDirRelPath);
 
     std::unique_ptr<CoverageAndResultsRequest>
     createCoverageAndResultsRequest(const std::string &projectName,
                                     const fs::path &projectPath,
-                                    const fs::path &testDirPath,
-                                    const fs::path &buildDirRelativePath,
+                                    const fs::path &testDirRelPath,
+                                    const fs::path &buildDirRelPath,
                                     std::unique_ptr<testsgen::TestFilter> testFilter);
 
     bool cmpChars(const std::string &charAsString, char c);

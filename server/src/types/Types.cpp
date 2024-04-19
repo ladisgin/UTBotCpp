@@ -7,6 +7,7 @@
 #include "exceptions/UnImplementedException.h"
 #include "utils/PrinterUtils.h"
 #include "utils/SizeUtils.h"
+#include "clang-utils/ClangUtils.h"
 
 #include "loguru.h"
 
@@ -18,7 +19,7 @@
 types::Type::Type(clang::QualType qualType, TypeName usedTypeName, const clang::SourceManager &sourceManager): mUsedType(std::move(usedTypeName)) {
     clang::QualType canonicalType = qualType.getCanonicalType();
     auto pp = clang::PrintingPolicy(clang::LangOptions());
-    fs::path sourceFilePath = sourceManager.getFileEntryForID(sourceManager.getMainFileID())->tryGetRealPathName().str();
+    fs::path sourceFilePath = ClangUtils::getSourceFilePath(sourceManager);
     if (Paths::getSourceLanguage(sourceFilePath) == utbot::Language::CXX) {
         pp.adjustForCPlusPlus();
     }
@@ -113,7 +114,7 @@ types::Type types::Type::baseTypeObj(size_t depth) const {
     type.mKinds.erase(type.mKinds.begin(), type.mKinds.begin() + depth);
     type.dimension = type.getDimension();
     type.mTypeId = mBaseTypeId;
-    type.mBaseTypeId = {};
+    type.mBaseTypeId = mBaseTypeId;
     return type;
 }
 
@@ -248,6 +249,10 @@ bool types::Type::isLValueReference() const {
     return isSimple() && dynamic_cast<SimpleType *>(mKinds.front().get())->isLValue();
 }
 
+bool types::Type::isRValueReference() const {
+    return isSimple() && dynamic_cast<SimpleType *>(mKinds.front().get())->isRValue();
+}
+
 bool types::Type::isConstQualified() const {
     return isSimple() && dynamic_cast<SimpleType *>(mKinds.front().get())->isConstQualified();
 }
@@ -282,10 +287,6 @@ types::Type types::Type::CStringType() {
 const std::string &types::Type::getStdinParamName() {
     static const std::string stdinParamName = "stdin_buf";
     return stdinParamName;
-}
-
-std::string types::Type::getFileParamName(char fileName) {
-    return StringUtils::stringFormat("%c_file_buf", fileName);
 }
 
 bool types::Type::isPointerToPointer() const {
@@ -342,7 +343,9 @@ int types::Type::indexOfFirstPointerInTypeKinds() const {
         }
         index++;
     }
-    throw BaseException("Couldn't find pointer in type " + typeName());
+    std::string message = "Couldn't find pointer in type " + typeName();
+    LOG_S(ERROR) << message;
+    throw BaseException(message);
 }
 
 bool types::Type::isOneDimensionPointer() const {
@@ -387,6 +390,13 @@ uint64_t types::Type::getId() const {
 
 void types::Type::replaceUsedType(const types::TypeName &newUsedType) {
     mUsedType = newUsedType;
+}
+
+void types::Type::replaceTypeNameIfUnnamed(const TypeName &newTypeName) {
+    if (isUnnamed()) {
+        mBaseType = newTypeName;
+        mUsedType = newTypeName;
+    }
 }
 
 /*
@@ -501,6 +511,10 @@ bool types::TypesHandler::isStructLike(uint64_t id) const {
  */
 bool types::TypesHandler::isEnum(const types::Type &type) const {
     return type.isSimple() && isEnum(type.getId());
+}
+
+bool types::TypesHandler::isAnonymousEnum(const types::Type& type) const {
+    return type.isUnnamed() && isEnum(type);
 }
 
 bool types::TypesHandler::isEnum(uint64_t id) const {
@@ -621,8 +635,9 @@ size_t types::TypesHandler::typeSize(const types::Type &type) const {
     if (isPointerToFunction(type)) {
         return SizeUtils::bytesToBits(sizeof(char *));
     }
-
-    throw UnImplementedException("Type is unknown for: " + type.typeName());
+    std::string message = "Type is unknown for: " + type.typeName();
+    LOG_S(ERROR) << message;
+    throw UnImplementedException(message);
 }
 
 std::string types::TypesHandler::removeConstPrefix(const TypeName &type) {

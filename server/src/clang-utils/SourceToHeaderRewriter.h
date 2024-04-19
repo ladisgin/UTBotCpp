@@ -8,6 +8,7 @@
 #include "building/BuildDatabase.h"
 #include "fetchers/Fetcher.h"
 #include "fetchers/FetcherUtils.h"
+#include "stubs/StubGen.h"
 #include "utils/FileSystemUtils.h"
 
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -24,6 +25,7 @@ class SourceToHeaderRewriter {
     fs::path projectPath;
     fs::path serverBuildDir;
     std::shared_ptr<Fetcher::FileToStringSet> structsToDeclare;
+    const types::TypesHandler &typesHandler;
 
     std::unique_ptr<clang::ast_matchers::MatchFinder::MatchCallback> fetcherInstance;
     std::unique_ptr<clang::ast_matchers::MatchFinder> finder;
@@ -31,14 +33,17 @@ class SourceToHeaderRewriter {
     std::unique_ptr<clang::tooling::FrontendActionFactory>
     createFactory(llvm::raw_ostream *externalStream,
                   llvm::raw_ostream *internalStream,
+                  llvm::raw_ostream *unnamedTypeDeclsStream,
                   llvm::raw_ostream *wrapperStream,
                   fs::path sourceFilePath,
-                  bool forStubHeader);
+                  bool forStubHeader,
+                  bool externFromStub);
 
 public:
     struct SourceDeclarations {
         std::string externalDeclarations;
         std::string internalDeclarations;
+        std::string unnamedTypeDeclarations;
     };
 
     friend class SourceToHeaderMatchCallback;
@@ -47,17 +52,21 @@ public:
         utbot::ProjectContext projectContext,
         const std::shared_ptr<CompilationDatabase> &compilationDatabase,
         std::shared_ptr<Fetcher::FileToStringSet> structsToDeclare,
-        fs::path serverBuildDir);
+        fs::path serverBuildDir,
+        const types::TypesHandler &typesHandler);
 
-    SourceDeclarations generateSourceDeclarations(const fs::path &sourceFilePath, bool forStubHeader);
+    SourceDeclarations generateSourceDeclarations(const fs::path &sourceFilePath, bool forStubHeader, bool externFromStub);
 
-    std::string generateTestHeader(const fs::path &sourceFilePath, const Tests &test);
+    std::string generateTestHeader(const fs::path &sourceFilePath, const Tests &test, bool externFromStub);
 
-    std::string generateStubHeader(const fs::path &sourceFilePath);
+    std::string generateStubHeader(const tests::Tests &tests, const fs::path &sourceFilePath);
 
     std::string generateWrapper(const fs::path &sourceFilePath);
 
-    void generateTestHeaders(tests::TestsMap &tests, ProgressWriter const *progressWriter);
+    void generateTestHeaders(tests::TestsMap &tests,
+                             const StubGen &stubGen,
+                             const CollectionUtils::MapFileTo<fs::path> &selectedTargets,
+                             ProgressWriter const *progressWriter);
 };
 
 

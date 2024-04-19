@@ -157,7 +157,7 @@ void BuildDatabase::addLibrariesForCommand(utbot::BaseCommand &command,
                     name = sharedLibraryFiles.at(name).at(libraryDir);
                 }
             }
-            fs::path fullPath = Paths::getCCJsonFileFullPath(name, libraryDir);
+            fs::path fullPath = Paths::getFileFullPath(name, libraryDir);
             if (CollectionUtils::containsKey(targetInfos, fullPath)) {
                 info.addFile(fullPath);
                 LOG_IF_S(WARNING, objectFiles) << "Object file " << command.getOutput()
@@ -194,8 +194,10 @@ BuildDatabase::getAllCompileCommands() const {
 
 fs::path BuildDatabase::getObjectFile(const fs::path &sourceFile) const {
     if (!CollectionUtils::containsKey(sourceFileInfos, sourceFile)) {
-        throw CompilationDatabaseException("Couldn't find object file for current source file " +
-                                           sourceFile.string());
+        std::string message = "Couldn't find object file for current source file " +
+                              sourceFile.string();
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     auto objectInfo = sourceFileInfos.at(sourceFile)[0];
     return objectInfo->getOutputFile();
@@ -206,8 +208,9 @@ CollectionUtils::FileSet BuildDatabase::getArchiveObjectFiles(const fs::path &ar
         return {};
     }
     if (!CollectionUtils::containsKey(targetInfos, archive)) {
-        throw CompilationDatabaseException(
-                "Couldn't find current archive file linkage information for " + archive.string());
+        std::string message = "Couldn't find current archive file linkage information for " + archive.string();
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     std::shared_ptr<TargetInfo> targetInfo = targetInfos.at(archive);
     CollectionUtils::FileSet result;
@@ -232,8 +235,9 @@ CollectionUtils::FileSet BuildDatabase::getArchiveTargetFiles(const fs::path &ar
         return {};
     }
     if (!CollectionUtils::containsKey(targetInfos, archive)) {
-        throw CompilationDatabaseException(
-                "Couldn't find current archive file linkage information for " + archive.string());
+        std::string message = "Couldn't find current archive file linkage information for " + archive.string();
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     std::shared_ptr<TargetInfo> targetInfo = targetInfos.at(archive);
     CollectionUtils::FileSet result = {archive};
@@ -251,21 +255,27 @@ fs::path BuildDatabase::getRootForSource(const fs::path &path) const {
     fs::path normalizedPath = Paths::normalizedTrimmed(path);
     if (Paths::isSourceFile(normalizedPath)) {
         if (!CollectionUtils::containsKey(sourceFileInfos, normalizedPath)) {
-            throw CompilationDatabaseException(
-                    "No executable or library found for current source file in link_commands.json: " + path.string());
+            std::string message =
+                    "No source file found in compile_commands.json: " + path.string();
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
         auto const &sourceFileInfo = sourceFileInfos.at(normalizedPath);
 
         auto linkUnit = sourceFileInfo[0]->linkUnit;
         if (linkUnit.empty()) {
-            throw CompilationDatabaseException(
-                    "No executable or library found for current source file in link_commands.json: " + path.string());
+            std::string message =
+                    "No executable or library found for current source file in link_commands.json: " + path.string();
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
         return getRootForSource(linkUnit);
     } else {
         if (!CollectionUtils::containsKey(targetInfos, normalizedPath)) {
-            throw CompilationDatabaseException(
-                    "No executable or library found for current library in link_commands.json: " + path.string());
+            std::string message =
+                    "No executable or library found in link_commands.json: " + path.string();
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
         auto linkUnit = targetInfos.at(normalizedPath);
         if (!linkUnit->parentLinkUnits.empty()) {
@@ -277,7 +287,13 @@ fs::path BuildDatabase::getRootForSource(const fs::path &path) const {
 }
 
 fs::path BuildDatabase::getRootForFirstSource() const {
-    return getRootForSource(sourceFileInfos.begin()->first);
+    if (sourceFileInfos.empty()) {
+        std::string message = "Source files not found";
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
+    } else {
+        return getRootForSource(sourceFileInfos.begin()->first);
+    }
 }
 
 fs::path BuildDatabase::getBitcodeForSource(const fs::path &sourceFile) const {
@@ -308,7 +324,9 @@ fs::path BuildDatabase::getBitcodeFile(const fs::path &filepath) const {
 std::shared_ptr<BuildDatabase::ObjectFileInfo>
 BuildDatabase::getClientCompilationObjectInfo(const fs::path &filepath) const {
     if (!CollectionUtils::contains(objectFileInfos, filepath)) {
-        throw CompilationDatabaseException("Object file not found in compilation_commands.json: " + filepath.string());
+        std::string message = "Object file not found in compilation_commands.json: " + filepath.string();
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     return objectFileInfos.at(filepath);
 }
@@ -316,7 +334,9 @@ BuildDatabase::getClientCompilationObjectInfo(const fs::path &filepath) const {
 std::shared_ptr<BuildDatabase::ObjectFileInfo>
 BuildDatabase::getClientCompilationSourceInfo(const fs::path &filepath) const {
     if (!CollectionUtils::contains(sourceFileInfos, filepath)) {
-        throw CompilationDatabaseException("Source file not found in compilation_commands.json: " + filepath.string());
+        std::string message = "Source file not found in compilation_commands.json: " + filepath.string();
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     LOG_IF_S(DEBUG, sourceFileInfos.at(filepath).size() > 1) << "More than one compile command for: " << filepath;
     return sourceFileInfos.at(filepath)[0];
@@ -330,7 +350,9 @@ BuildDatabase::getClientCompilationUnitInfo(const fs::path &filepath) const {
     if (Paths::isObjectFile(filepath)) {
         return getClientCompilationObjectInfo(filepath);
     }
-    throw CompilationDatabaseException("File is not a compilation unit or an object file: " + filepath.string());
+    std::string message = "File is not a compilation unit or an object file: " + filepath.string();
+    LOG_S(ERROR) << message;
+    throw CompilationDatabaseException(message);
 }
 
 
@@ -346,20 +368,25 @@ std::shared_ptr<const BuildDatabase::TargetInfo> BuildDatabase::getClientLinkUni
     if (CollectionUtils::containsKey(targetInfos, filepath)) {
         return targetInfos.at(filepath);
     }
-    throw CompilationDatabaseException("File is not in link_commands.json: " +
-                                       filepath.string());
+    std::string message = "File is not in link_commands.json: " +
+                          filepath.string();
+    LOG_S(ERROR) << message;
+    throw CompilationDatabaseException(message);
+}
+
+static inline bool maybe64bits(const fs::path &path) {
+    return StringUtils::contains(path.string(), "64");
 }
 
 bool BuildDatabase::ObjectFileInfo::conflictPriorityMore(
         const std::shared_ptr<BuildDatabase::ObjectFileInfo> &left,
         const std::shared_ptr<BuildDatabase::ObjectFileInfo> &right) {
-    if (StringUtils::contains(left->getOutputFile().string(), "64")) {
-        return true;
+    bool leftContains64 = maybe64bits(left->getOutputFile());
+    bool rightContains64 = maybe64bits(right->getOutputFile());
+    if (leftContains64 == rightContains64) {
+        return left->getOutputFile().string() < right->getOutputFile().string();
     }
-    if (StringUtils::contains(right->getOutputFile().string(), "64")) {
-        return false;
-    }
-    return false;
+    return leftContains64;
 }
 
 fs::path BuildDatabase::getCorrespondingBitcodeFile(const fs::path &filepath) {
@@ -432,6 +459,11 @@ bool BuildDatabase::ObjectFileInfo::is32bits() const {
 }
 
 fs::path BuildDatabase::TargetInfo::getOutput() const {
+    if (commands.empty()) {
+        std::string message = "There are no targets";
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
+    }
     return commands[0].getOutput();
 }
 
@@ -530,7 +562,7 @@ std::shared_ptr<BuildDatabase::TargetInfo> BuildDatabase::getPriorityTarget() co
 }
 
 fs::path BuildDatabase::newDirForFile(const fs::path &file) const {
-    fs::path base = Paths::longestCommonPrefixPath(this->projectContext.buildDir(),
+    fs::path base = Paths::longestCommonPrefixPath(this->projectContext.getBuildDirAbsPath(),
                                                    this->projectContext.projectPath);
     return Paths::createNewDirForFile(file, base, this->serverBuildDir);
 }

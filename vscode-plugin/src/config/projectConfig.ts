@@ -8,19 +8,21 @@ import {ExtensionLogger} from '../logger';
 import {ConfigMode, ProjectConfigResponse, ProjectConfigStatus} from '../proto-ts/testgen_pb';
 import {ProjectConfigEventsEmitter} from './projectConfigEventsEmitter';
 
-const { logger } = ExtensionLogger;
+const {logger} = ExtensionLogger;
 
 export class ProjectConfig {
     private static readonly guideUri = "https://github.com/UnitTestBot/UTBotCpp/wiki";
 
     private readonly projectName: string;
     private readonly projectPath: string;
-    private readonly buildDirRelativePath: string;
+    private readonly buildDirRelPath: string;
+    private readonly itfRelPath: string;
     private readonly cmakeOptions: Array<string>;
 
     constructor(private readonly client: Client) {
         this.projectName = Prefs.getProjectName();
-        [this.projectPath, this.buildDirRelativePath] = Prefs.getBuildDirPath();
+        [this.projectPath, this.buildDirRelPath] = Prefs.getBuildDirPath();
+        this.itfRelPath = Prefs.getItfRelPath();
         this.cmakeOptions = Prefs.getCmakeOptions();
     }
 
@@ -64,12 +66,12 @@ export class ProjectConfig {
             case ProjectConfigStatus.BUILD_DIR_CREATION_FAILED: {
                 return this.createBuildDirFailed(response.getMessage());
             }
-            case ProjectConfigStatus.BUILD_DIR_SAME_AS_PROJECT: { 
+            case ProjectConfigStatus.BUILD_DIR_SAME_AS_PROJECT: {
                 const message = response.getMessage();
                 logger.warn(message);
                 messages.showWarningMessage(`${message}. 
                                                     Please, follow the [guilde](${ProjectConfig.guideUri}) to configure project.`);
-                return false;           
+                return false;
             }
             default: {
                 this.handleUnexpectedResponse();
@@ -90,7 +92,7 @@ export class ProjectConfig {
         return utbotUI.progresses().withProgress<ProjectConfigResponse>(async (progressKey, token) => {
             utbotUI.progresses().report(progressKey, "Check project configuration...");
             const responseHandler = new DummyResponseHandler<ProjectConfigResponse>();
-            return this.client.checkProjectConfigurationRequest(this.projectName, this.projectPath, this.buildDirRelativePath, this.cmakeOptions, configMode, progressKey, token, responseHandler);
+            return this.client.checkProjectConfigurationRequest(this.projectName, this.projectPath, this.buildDirRelPath, this.itfRelPath, this.cmakeOptions, configMode, progressKey, token, responseHandler);
         });
     }
 
@@ -98,7 +100,7 @@ export class ProjectConfig {
         logger.info('Build folder not found');
 
         const yesOption = 'Create build folder';
-        return vs.window.showWarningMessage(`Build folder "${this.buildDirRelativePath}"
+        return vs.window.showWarningMessage(`Build folder "${this.buildDirRelPath}"
                 specified in [Preferences](command:unittestbot.innercommand.openBuildDirectoryConfig), does not exist.`, ...[yesOption]).then(async selection => {
             if (selection === yesOption) {
                 return this.handleBuildDirCreationRequest();

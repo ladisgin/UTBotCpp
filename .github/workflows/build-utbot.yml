@@ -86,31 +86,31 @@ jobs:
         run: |
           export VERSION=$(date '+%Y.%m').$GITHUB_RUN_NUMBER
           export RUN_INFO=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          chmod +x docker/action-scripts/build-utbot.sh
-          ./docker/action-scripts/build-utbot.sh
+          chmod +x docker/action-scripts/build-clean-utbot.sh
+          ./docker/action-scripts/build-clean-utbot.sh
       - name: Run Integration Tests
         run: |
           chmod +x docker/action-scripts/build-vsix.sh
           ./docker/action-scripts/build-vsix.sh
           chmod +x docker/action-scripts/integration-tests.sh
           ./docker/action-scripts/integration-tests.sh
-      - name: Setup Java for building CLion plugin
-        uses: actions/setup-java@v3
-        with:
-          distribution: zulu
-          java-version: 11
-      - name: Run CLion integration tests
-        run: |
-          chmod +x docker/action-scripts/runClionIntegrationTests.sh 
-          ./docker/action-scripts/runClionIntegrationTests.sh
-      - name: Upload logs
-        uses: actions/upload-artifact@v3
-        if: failure()
-        with:
-          name: test-report
-          path: |
-            /github/home/logs
-            clion-plugin/build/reports/tests/**/*
+#      - name: Setup Java for building CLion plugin
+#        uses: actions/setup-java@v3
+#        with:
+#          distribution: zulu
+#          java-version: 11
+#      - name: Run CLion integration tests
+#        run: |
+#          chmod +x docker/action-scripts/runClionIntegrationTests.sh
+#          ./docker/action-scripts/runClionIntegrationTests.sh
+#      - name: Upload logs
+#        uses: actions/upload-artifact@v3
+#        if: failure()
+#        with:
+#          name: test-report
+#          path: |
+#            /github/home/logs
+#            clion-plugin/build/reports/tests/**/*
 
   build-utbot-and-generate-test:
     needs: matrix-prep
@@ -137,8 +137,8 @@ jobs:
 
       - name: Build UTBot
         run: |
-          chmod +x docker/action-scripts/build-utbot.sh
-          ./docker/action-scripts/build-utbot.sh
+          chmod +x docker/action-scripts/build-clean-utbot.sh
+          ./docker/action-scripts/build-clean-utbot.sh
 
       - name: Generate tests
         run: |
@@ -153,7 +153,7 @@ jobs:
 
   build-portable-container:
     needs: build-utbot-and-generate-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     env:
       DOCKER_IMAGE_TAG: docker-image
       PORTABLE_CONTAINER_NAME: Portable

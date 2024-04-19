@@ -13,14 +13,14 @@ void GlobalVariableUsageMatchCallback::run(const MatchFinder::MatchResult &Resul
     checkUsage(Result);
 }
 
-static std::unordered_set<std::string> BLACK_LIST = { "stdin", "stdout", "stderr" };
+static std::unordered_set<std::string> BLACK_LIST = {"stdin", "stdout", "stderr"};
 
 void GlobalVariableUsageMatchCallback::checkUsage(const MatchFinder::MatchResult &Result) {
     if (const auto *pVarDecl =
             Result.Nodes.getNodeAs<clang::VarDecl>(Matchers::GLOBAL_VARIABLE_USAGE)) {
         clang::QualType varType = pVarDecl->getType();
         std::string name = pVarDecl->getNameAsString();
-        if (!pVarDecl->isKnownToBeDefined()) {
+        if (!pVarDecl->isKnownToBeDefined() && !pVarDecl->isExternC()) {
             LOG_S(DEBUG) << "Variable \"" << name << "\" was skipped - it has no definition.";
             return;
         }
@@ -48,10 +48,9 @@ void GlobalVariableUsageMatchCallback::checkUsage(const MatchFinder::MatchResult
 void GlobalVariableUsageMatchCallback::handleUsage(const clang::FunctionDecl *functionDecl,
                                                    const clang::VarDecl *varDecl) {
     clang::SourceManager &sourceManager = functionDecl->getASTContext().getSourceManager();
-    fs::path sourceFilePath =
-        sourceManager.getFileEntryForID(sourceManager.getMainFileID())->tryGetRealPathName().str();
+    fs::path sourceFilePath = ClangUtils::getSourceFilePath(sourceManager);
     auto const &[iterator, inserted] =
-        usages.emplace(varDecl->getNameAsString(), functionDecl->getNameAsString());
+            usages.emplace(varDecl->getNameAsString(), functionDecl->getNameAsString());
     auto const &usage = *iterator;
 
     LOG_S(MAX) << "Found usage of global variable \'" << usage.variableName << "\' in function \'"
@@ -62,30 +61,33 @@ void GlobalVariableUsageMatchCallback::handleUsage(const clang::FunctionDecl *fu
         return;
     }
 
-    auto &methods = (*parent->projectTests).at(sourceFilePath).methods;
-    auto &method = methods[usage.functionName];
+    auto &tests = (*parent->projectTests).at(sourceFilePath);
+    auto &method = tests.methods[usage.functionName];
     const clang::QualType realParamType = varDecl->getType().getCanonicalType();
     const std::string usedParamTypeString = varDecl->getType().getAsString();
     types::Type paramType = types::Type(realParamType, usedParamTypeString, sourceManager);
     method.globalParams.emplace_back(paramType, usage.variableName, AlignmentFetcher::fetch(varDecl));
+    if (varDecl->isExternC() && !varDecl->isKnownToBeDefined()) {
+        tests.externVariables.insert({paramType, usage.variableName});
+    }
 }
 
 GlobalVariableUsageMatchCallback::Usage::Usage(std::string variableName, std::string functionName)
-    : variableName(std::move(variableName)), functionName(std::move(functionName)) {
+        : variableName(std::move(variableName)), functionName(std::move(functionName)) {
 }
 
 bool GlobalVariableUsageMatchCallback::Usage::operator==(
-    const GlobalVariableUsageMatchCallback::Usage &rhs) const {
+        const GlobalVariableUsageMatchCallback::Usage &rhs) const {
     return variableName == rhs.variableName && functionName == rhs.functionName;
 }
 
 bool GlobalVariableUsageMatchCallback::Usage::operator!=(
-    const GlobalVariableUsageMatchCallback::Usage &rhs) const {
+        const GlobalVariableUsageMatchCallback::Usage &rhs) const {
     return !(rhs == *this);
 }
 
 std::size_t GlobalVariableUsageMatchCallback::UsageHash::operator()(
-    const GlobalVariableUsageMatchCallback::Usage &usage) const {
+        const GlobalVariableUsageMatchCallback::Usage &usage) const {
     size_t seed = 0;
     HashUtils::hashCombine(seed, usage.variableName, usage.functionName);
     return seed;

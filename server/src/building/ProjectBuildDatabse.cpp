@@ -6,9 +6,10 @@
 #include "loguru.h"
 #include "utils/StringUtils.h"
 #include "utils/CompilationUtils.h"
+#include "Paths.h"
 
 static std::string tryConvertToFullPath(const std::string &possibleFilePath, const fs::path &dirPath) {
-    fs::path fullFilePath = Paths::getCCJsonFileFullPath(possibleFilePath, dirPath);
+    fs::path fullFilePath = Paths::getFileFullPath(possibleFilePath, dirPath);
     return fs::exists(fullFilePath) ? fullFilePath.string() : possibleFilePath;
 }
 
@@ -30,33 +31,48 @@ static std::string tryConvertOptionToPath(const std::string &possibleFilePath, c
 
 ProjectBuildDatabase::ProjectBuildDatabase(fs::path _buildCommandsJsonPath,
                                            fs::path _serverBuildDir,
-                                           utbot::ProjectContext _projectContext) :
+                                           utbot::ProjectContext _projectContext,
+                                           bool skipObjectWithoutSource) :
         BuildDatabase(_serverBuildDir,
                       _buildCommandsJsonPath,
                       fs::canonical(_buildCommandsJsonPath / "link_commands.json"),
                       fs::canonical(_buildCommandsJsonPath / "compile_commands.json"),
                       std::move(_projectContext)) {
     if (!fs::exists(linkCommandsJsonPath) || !fs::exists(compileCommandsJsonPath)) {
-        throw CompilationDatabaseException("Couldn't open link_commands.json or compile_commands.json files");
+        std::string message = "Couldn't open link_commands.json or compile_commands.json files";
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
 
     try {
         auto linkCommandsJson = JsonUtils::getJsonFromFile(linkCommandsJsonPath);
         auto compileCommandsJson = JsonUtils::getJsonFromFile(compileCommandsJsonPath);
         initObjects(compileCommandsJson);
-        initInfo(linkCommandsJson);
+        for (const auto i: sourceFileInfos) {
+            LOG_S(MAX) << "Source: " << i.first << " Objects: "
+                       << StringUtils::joinWith(CollectionUtils::transformTo<std::vector<std::string>>
+                                                        (i.second, [](const std::shared_ptr<ObjectFileInfo> &s) {
+                                                            return s->getOutputFile();
+                                                        }), ", ");
+        }
+        initInfo(linkCommandsJson, skipObjectWithoutSource);
+        for (const auto i: targetInfos) {
+            LOG_S(MAX) << "Target: " << i.first << " Files: " << StringUtils::joinWith(i.second->files, ", ");
+        }
         filterInstalledFiles();
         addLocalSharedLibraries();
         fillTargetInfoParents();
         createClangCompileCommandsJson();
     } catch (const std::exception &e) {
+        LOG_S(ERROR) << e.what();
         return;
     }
 }
 
-ProjectBuildDatabase::ProjectBuildDatabase(utbot::ProjectContext projectContext) : ProjectBuildDatabase(
+ProjectBuildDatabase::ProjectBuildDatabase(utbot::ProjectContext projectContext, bool skipObjectWithoutSource)
+        : ProjectBuildDatabase(
         CompilationUtils::substituteRemotePathToCompileCommandsJsonPath(projectContext),
-        Paths::getUTBotBuildDir(projectContext), std::move(projectContext)) {
+        Paths::getUTBotBuildDir(projectContext), std::move(projectContext), skipObjectWithoutSource) {
 }
 
 
@@ -66,7 +82,7 @@ void ProjectBuildDatabase::initObjects(const nlohmann::json &compileCommandsJson
 
         fs::path directory = compileCommand.at("directory").get<std::string>();
         fs::path jsonFile = compileCommand.at("file").get<std::string>();
-        fs::path sourceFile = Paths::getCCJsonFileFullPath(jsonFile, directory);
+        fs::path sourceFile = Paths::getFileFullPath(jsonFile, directory);
 
         std::vector<std::string> jsonArguments;
         if (compileCommand.contains("command")) {
@@ -75,6 +91,7 @@ void ProjectBuildDatabase::initObjects(const nlohmann::json &compileCommandsJson
         } else {
             jsonArguments = std::vector<std::string>(compileCommand.at("arguments"));
         }
+        LOG_S(MAX) << "Processing build command: " << StringUtils::joinWith(jsonArguments, " ");
         std::transform(jsonArguments.begin(), jsonArguments.end(), jsonArguments.begin(),
                        [&directory](const std::string &argument) {
                            return tryConvertOptionToPath(argument, directory);
@@ -82,10 +99,37 @@ void ProjectBuildDatabase::initObjects(const nlohmann::json &compileCommandsJson
         objectInfo->command = utbot::CompileCommand(jsonArguments, directory, sourceFile);
         objectInfo->command.removeWerror();
         fs::path outputFile = objectInfo->getOutputFile();
-        fs::path kleeFilePathTemplate = Paths::createNewDirForFile(sourceFile, projectContext.projectPath,
-                                                                   Paths::getUTBotFiles(projectContext));
+
+        if (!Paths::isSourceFile(sourceFile)) {
+            LOG_S(INFO) << "Skip non C/C++ file: \"" << sourceFile << "\"";
+            ignoredOutput.insert(outputFile);
+            continue;
+        }
+
+        fs::path kleeFilePathTemplate;
+        if (Paths::isSubPathOf(projectContext.projectPath, sourceFile)) {
+            kleeFilePathTemplate = Paths::createNewDirForFile(sourceFile, projectContext.projectPath,
+                                                              Paths::getUTBotFiles(projectContext));
+        } else {
+            LOG_S(WARNING)
+            << "Source file " << sourceFile << " outside of project root " << projectContext.projectPath;
+            kleeFilePathTemplate = Paths::createNewDirForFile(sourceFile, fs::path("/"),
+                                                              Paths::getUTBotFiles(projectContext) /
+                                                              "outside_of_project");
+        }
+
         fs::path kleeFile = Paths::addSuffix(kleeFilePathTemplate, "_klee");
         objectInfo->kleeFilesInfo = std::make_shared<KleeFilesInfo>(kleeFile);
+
+        if (CollectionUtils::containsKey(objectFileInfos, outputFile) && Paths::isObjectFile(outputFile)) {
+            auto previusInfo = objectFileInfos[outputFile];
+            if (previusInfo->command.getCommandLine() == objectInfo->command.getCommandLine()) {
+                LOG_S(WARNING) << "Skip duplicate compile command for object file: " << outputFile;
+            } else {
+                LOG_S(WARNING) << "Skip second compile command for object file: " << outputFile;
+            }
+            continue;
+        }
 
         if (CollectionUtils::containsKey(objectFileInfos, outputFile) ||
             CollectionUtils::containsKey(targetInfos, outputFile)) {
@@ -125,14 +169,16 @@ void ProjectBuildDatabase::initObjects(const nlohmann::json &compileCommandsJson
             objectFileInfos[outputFile] = objectInfo;
         }
         const fs::path &sourcePath = objectInfo->getSourcePath();
+
         sourceFileInfos[sourcePath].emplace_back(objectInfo);
+
     }
     for (auto &[sourceFile, objectInfos]: sourceFileInfos) {
         std::sort(objectInfos.begin(), objectInfos.end(), BuildDatabase::ObjectFileInfo::conflictPriorityMore);
     }
 }
 
-void ProjectBuildDatabase::initInfo(const nlohmann::json &linkCommandsJson) {
+void ProjectBuildDatabase::initInfo(const nlohmann::json &linkCommandsJson, bool skipObjectWithoutSource) {
     for (nlohmann::json const &linkCommand: linkCommandsJson) {
         fs::path directory = linkCommand.at("directory").get<std::string>();
         std::vector<std::string> jsonArguments;
@@ -142,8 +188,13 @@ void ProjectBuildDatabase::initInfo(const nlohmann::json &linkCommandsJson) {
         } else {
             jsonArguments = std::vector<std::string>(linkCommand.at("arguments"));
         }
-        if (StringUtils::endsWith(jsonArguments[0], "ranlib") ||
-            StringUtils::endsWith(jsonArguments[0], "cmake")) {
+        LOG_S(MAX) << "Processing link command: " << StringUtils::joinWith(jsonArguments, " ");
+        if (StringUtils::endsWith(jsonArguments[0], "ranlib")) {
+            LOG_S(MAX) << "Skip ranlib command";
+            continue;
+        }
+        if (StringUtils::endsWith(jsonArguments[0], "cmake")) {
+            LOG_S(MAX) << "Skip cmake command";
             continue;
         }
         std::transform(jsonArguments.begin(), jsonArguments.end(), jsonArguments.begin(),
@@ -155,6 +206,10 @@ void ProjectBuildDatabase::initInfo(const nlohmann::json &linkCommandsJson) {
 
         utbot::LinkCommand command(jsonArguments, directory);
         fs::path const &output = command.getOutput();
+        if (output.empty()) {
+            LOG_S(WARNING) << "Empty output of command: " << command.toString();
+        }
+
         auto targetInfo = targetInfos[output];
         if (targetInfo == nullptr) {
             targetInfo = targetInfos[output] = std::make_shared<TargetInfo>();
@@ -163,16 +218,32 @@ void ProjectBuildDatabase::initInfo(const nlohmann::json &linkCommandsJson) {
         }
         for (nlohmann::json const &jsonFile: linkCommand.at("files")) {
             auto filename = jsonFile.get<std::string>();
-            fs::path currentFile = Paths::getCCJsonFileFullPath(filename, command.getDirectory());
-            targetInfo->addFile(currentFile);
-            if (Paths::isObjectFile(currentFile)) {
-                if (!CollectionUtils::containsKey(objectFileInfos, currentFile)) {
-                    throw CompilationDatabaseException(
-                            "compile_commands.json doesn't contain a command for object file "
-                            + currentFile.string());
-                }
-                objectFileInfos[currentFile]->linkUnit = output;
+            fs::path currentFile = Paths::getFileFullPath(filename, command.getDirectory());
+            if (ignoredOutput.count(currentFile)) {
+                continue;
             }
+            if (Paths::isObjectFile(currentFile)) {
+                if (!CollectionUtils::containsKey(objectFileInfos, currentFile) &&
+                    !CollectionUtils::containsKey(objectFileInfos,
+                                                  relative(currentFile, directory))) {
+                    std::string message =
+                            "compile_commands.json doesn't contain a command for object file " +
+                            currentFile.string();
+                    if (skipObjectWithoutSource) {
+                        LOG_S(WARNING) << message;
+                        continue;
+                    }
+                    LOG_S(ERROR) << message;
+                    throw CompilationDatabaseException(message);
+                }
+                if (CollectionUtils::containsKey(objectFileInfos, currentFile)) {
+                    objectFileInfos[currentFile]->linkUnit = output;
+                } else if (CollectionUtils::containsKey(objectFileInfos,
+                                                        relative(currentFile, directory))) {
+                    objectFileInfos[relative(currentFile, directory)]->linkUnit = output;
+                }
+            }
+            targetInfo->addFile(currentFile);
         }
         targetInfo->commands.emplace_back(command);
     }
@@ -231,10 +302,12 @@ void ProjectBuildDatabase::fillTargetInfoParents() {
     }
     for (auto &[library, parents]: parentTargets) {
         if (!CollectionUtils::containsKey(targetInfos, library)) {
-            throw CompilationDatabaseException(
+            std::string message =
                     "link_commands.json doesn't contain a command for building library: " +
                     library.string() + "\nReferenced from command for: " +
-                    (parents.empty() ? "none" : parents[0].string()));
+                    (parents.empty() ? "none" : parents[0].string());
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
         targetInfos[library]->parentLinkUnits = std::move(parents);
     }

@@ -5,7 +5,6 @@
 #include "commands/Commands.h"
 
 #include "loguru.h"
-#include "config.h"
 
 using namespace GenerationUtils;
 using namespace Commands;
@@ -45,23 +44,27 @@ void CLIUtils::setupLogger(const std::string &logPath,
 
 std::unique_ptr<testsgen::ProjectContext>
 createProjectContextByOptions(const ProjectContextOptionGroup &projectContextOptions) {
-    fs::path projectPath = projectContextOptions.getProjectPath();
-    fs::path testDir =
-        Paths::normalizedTrimmed(projectPath / projectContextOptions.getTestDirectory());
     auto projectContext =
-        GrpcUtils::createProjectContext(projectContextOptions.getProjectName(), projectPath,
-                                        testDir, projectContextOptions.getBuildDirectory());
+            GrpcUtils::createProjectContext(projectContextOptions.getProjectName(),
+                                            projectContextOptions.getProjectPath(),
+                                            projectContextOptions.getTestDirectory(),
+                                            projectContextOptions.getReportDirectory(),
+                                            projectContextOptions.getBuildDirectory(),
+                                            projectContextOptions.getItfRelPath());
     return projectContext;
 }
 
 std::unique_ptr<testsgen::SettingsContext>
 createSettingsContextByOptions(const SettingsContextOptionGroup &settingsContextOptionGroup) {
     return GrpcUtils::createSettingsContext(
-        settingsContextOptionGroup.doGenerateForStaticFunctions(),
-        settingsContextOptionGroup.isVerbose(), settingsContextOptionGroup.getTimeoutPerFunction(),
-        settingsContextOptionGroup.getTimeoutPerTest(),
-        settingsContextOptionGroup.isDeterministicSearcherUsed(),
-        settingsContextOptionGroup.withStubs());
+            settingsContextOptionGroup.doGenerateForStaticFunctions(),
+            settingsContextOptionGroup.isVerbose(), settingsContextOptionGroup.getTimeoutPerFunction(),
+            settingsContextOptionGroup.getTimeoutPerTest(),
+            settingsContextOptionGroup.isDeterministicSearcherUsed(),
+            settingsContextOptionGroup.withStubs(),
+            settingsContextOptionGroup.getErrorMode(),
+            settingsContextOptionGroup.doDifferentVariablesOfTheSameType(),
+            settingsContextOptionGroup.getSkipObjectWithoutSource());
 }
 
 std::vector<fs::path> getSourcePaths(const ProjectContextOptionGroup &projectContextOptions,
@@ -106,6 +109,9 @@ void CLIUtils::parse(int argc, char **argv, CLI::App &app) {
 
     // PARSE RESULTS
     app.parse(argc, argv);
+
+    CLIUtils::setupLogger(mainCommands.getLogPath(),
+                          mainCommands.getVerbosity());
 
     if (app.got_subcommand(mainCommands.getGenerateCommand())) {
         auto sourcePaths =
@@ -241,8 +247,6 @@ void CLIUtils::parse(int argc, char **argv, CLI::App &app) {
 
         LOG_S(INFO) << "Successfully finished.";
     } else {
-        CLIUtils::setupLogger(serverCommandOptions.getLogPath(),
-                              serverCommandOptions.getVerbosity());
         Server server;
         if (serverCommandOptions.getPort() != 0) {
             server.run(serverCommandOptions.getPort());

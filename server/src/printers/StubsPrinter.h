@@ -5,9 +5,10 @@
 #include "ProjectContext.h"
 #include "stubs/Stubs.h"
 #include "types/Types.h"
+#include "utils/StubsUtils.h"
 
 namespace printer {
-    class StubsPrinter : Printer {
+    class StubsPrinter : public Printer {
     public:
         StubsPrinter(utbot::Language srcLanguage);
 

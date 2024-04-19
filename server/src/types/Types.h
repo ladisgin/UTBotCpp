@@ -26,6 +26,13 @@ namespace types {
     enum class PointerUsage;
     enum class ReferenceType;
 
+    enum AccessSpecifier {
+        AS_pubic,
+        AS_protected,
+        AS_private,
+        AS_none
+    };
+
     class Type {
     public:
         Type() = default;
@@ -151,6 +158,12 @@ namespace types {
         [[nodiscard]] bool isLValueReference() const;
 
         /**
+         * Checks whether given type is an rvalue reference type.
+         * @return true if type is rvalue reference, false otherwise.
+         */
+        [[nodiscard]] bool isRValueReference() const;
+
+        /**
          * Checks whether given type is an const qualified.
          * @return true if type is const, false otherwise.
          */
@@ -205,6 +218,13 @@ namespace types {
         void replaceUsedType(const TypeName &newUsedType);
 
         /**
+         * Replace current baseType and usedType with a new one if unnamed.
+         * @param newTypeName - name of type
+         * @return
+         */
+        void replaceTypeNameIfUnnamed(const TypeName &newTypeName);
+
+        /**
          * Creates type from its name. Created type satisfies following:
          * typeName() == "const " + type && baseType() == type && usedType() == typeName();
          * @param type - name of type
@@ -242,7 +262,6 @@ namespace types {
         static const size_t symFilesCount = 3;
 
         static const std::string &getStdinParamName();
-        static std::string getFileParamName(char fileName);
     private:
 
         explicit Type(const TypeName& type, size_t pointersNum=0);
@@ -263,18 +282,13 @@ namespace types {
 
     struct Field {
         types::Type type;
+        bool unnamedType;
         bool anonymous;
         std::string name;
         /// size in @b bits
         size_t size;
         /// offset in @b bits, reassigned in structFields
         size_t offset = 0;
-        enum AccessSpecifier {
-            AS_pubic,
-            AS_protected,
-            AS_private,
-            AS_none
-        };
         AccessSpecifier accessSpecifier = AS_pubic;
     };
 
@@ -301,6 +315,7 @@ namespace types {
         bool hasAnonymousStructOrUnion;
         bool isCLike;
         SubType subType;
+        bool hasDefaultPublicConstructor;
     };
 
     struct EnumInfo: TypeInfo {
@@ -312,6 +327,8 @@ namespace types {
         std::unordered_map<std::string, EnumEntry> namesToEntries{};
 
         std::optional<std::string> access;
+
+        bool isSpecifierNeeded = true;
 
         std::string getEntryName(std::string const& value, utbot::Language language) const;
     };
@@ -350,7 +367,7 @@ namespace types {
             size_t maximumAlignment = 16; /// maximumAlignment in @b bytes
         };
 
-        explicit TypesHandler(TypeMaps &types, SizeContext sizeContext)
+        explicit TypesHandler(const TypeMaps &types, SizeContext sizeContext)
             : typeMaps(types), sizeContext(sizeContext){};
 
         /**
@@ -454,6 +471,12 @@ namespace types {
          * @return whether given type is an enum
          */
         bool isEnum(const Type&) const;
+
+        /**
+         * Returns true if given type is an anonymous enum, otherwise false.
+         * @return whether given type is an anonymous enum
+         */
+         bool isAnonymousEnum(const Type&) const;
 
 
         /**
@@ -628,7 +651,7 @@ namespace types {
         };
 
     private:
-        TypeMaps &typeMaps;
+        const TypeMaps &typeMaps;
         SizeContext sizeContext;
         mutable tsl::ordered_set<TypeName> recursiveCheckStarted{};
         mutable std::unordered_map<IsSupportedTypeArguments,
@@ -649,7 +672,9 @@ namespace types {
             if (CollectionUtils::containsKey(someMap, id)) {
                 return someMap.at(id);
             }
-            throw NoSuchTypeException(StringUtils::stringFormat("Type with id=%llu can't be found.", id));
+            std::string message = StringUtils::stringFormat("Type with id=%llu can't be found.", id);
+            LOG_S(ERROR) << message;
+            throw NoSuchTypeException(message);
         }
     };
 

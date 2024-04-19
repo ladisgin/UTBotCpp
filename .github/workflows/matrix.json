@@ -1,9 +1,9 @@
 {
   "include": [
     {
-      "DOCKER_TAG": "2022.10.0",
-      "OPERATING_SYSTEM_TAG": "18.04",
-      "LLVM_VERSION_MAJOR": "10"
+      "DOCKER_TAG": "2024.03.0",
+      "OPERATING_SYSTEM_TAG": "20.04",
+      "LLVM_VERSION_MAJOR": "14"
     }
   ]
 }

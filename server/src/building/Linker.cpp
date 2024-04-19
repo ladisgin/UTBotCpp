@@ -46,8 +46,9 @@ fs::path Linker::getSourceFilePath() {
     } else if (auto snippetTestGen = dynamic_cast<SnippetTestGen *>(&testGen)) {
         return snippetTestGen->filePath;
     } else {
-        throw BaseException(
-            "Couldn't handle test generation of current type in function getSourcePath");
+        std::string message = "Couldn't handle test generation of current type in function getSourcePath";
+        LOG_S(ERROR) << message;
+        throw BaseException(message);
     }
 }
 
@@ -106,6 +107,7 @@ void Linker::linkForOneFile(const fs::path &sourceFilePath) {
             auto [targetBitcode, stubsSet, _] = result.getOpt().value();
             addToGenerated({ objectFile }, targetBitcode);
             auto&& targetUnitInfo = testGen.getTargetBuildDatabase()->getClientLinkUnitInfo(target);
+            selectedTargets[sourceFilePath] = target;
             return;
         } else {
             LOG_S(DEBUG) << "Linkage for target " << target.filename() << " failed: " << result.getError()->c_str();
@@ -193,6 +195,7 @@ void Linker::linkForProject() {
                                         return compilationUnitInfo->getOutputFile();
                                     });
                             addToGenerated(objectFiles, linkres.bitcodeOutput);
+                            selectedTargets[sourceFile] = target;
                             break;
                         } else {
                             std::stringstream ss;
@@ -239,6 +242,7 @@ std::vector<tests::TestMethod> Linker::getTestMethods() {
         for (auto &[fileName, tests] : testGen.tests) {
             if (!tests.isFilePresentedInCommands) {
                 if (isForOneFile()) {
+                    LOG_S(ERROR) << FileNotPresentedInCommandsException::createMessage(fileName);
                     throw FileNotPresentedInCommandsException(fileName);
                 } else {
                     LOG_S(WARNING) << FileNotPresentedInCommandsException::createMessage(fileName);
@@ -303,12 +307,20 @@ std::vector<tests::TestMethod> Linker::getTestMethods() {
         }
     }
     if (!isAnyOneLinked) {
-        throw CompilationDatabaseException("Couldn't link any files");
+        std::string message = "Couldn't link any files";
+        LOG_S(ERROR) << message;
+        throw CompilationDatabaseException(message);
     }
     if (testMethods.empty()) {
-        throw NoTestGeneratedException("Couldn't generate tests for any method");
+        std::string message = "Couldn't generate tests for any method";
+        LOG_S(ERROR) << message;
+        throw NoTestGeneratedException(message);
     }
     return testMethods;
+}
+
+CollectionUtils::MapFileTo<fs::path> Linker::getSelectedTargets() {
+    return selectedTargets;
 }
 
 Linker::Linker(BaseTestGen &testGen,
@@ -337,8 +349,9 @@ Result<Linker::LinkResult> Linker::link(const CollectionUtils::MapFileTo<fs::pat
     LOG_S(DEBUG) << logStream.str();
     for (const auto &[objectFile, bitcodeFile] : bitcodeFiles) {
         if (!fs::exists(bitcodeFile)) {
-            throw CompilationDatabaseException("Trying to link file that doesn't exist: " +
-                                               bitcodeFile.string());
+            std::string message = "Trying to link file that doesn't exist: " + bitcodeFile.string();
+            LOG_S(ERROR) << message;
+            throw CompilationDatabaseException(message);
         }
     }
 
@@ -384,6 +397,7 @@ Result<Linker::LinkResult> Linker::link(const CollectionUtils::MapFileTo<fs::pat
     bool success = irParser.parseModule(targetBitcode, testGen.tests);
     if (!success) {
         std::string message = StringUtils::stringFormat("Couldn't parse module: %s", targetBitcode);
+        LOG_S(ERROR) << message;
         throw CompilationDatabaseException(message);
     }
 

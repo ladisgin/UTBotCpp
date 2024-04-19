@@ -19,13 +19,17 @@ namespace GrpcUtils {
     std::unique_ptr<testsgen::ProjectContext>
     createProjectContext(const std::string &projectName,
                          const fs::path &projectPath,
-                         const fs::path &testDirPath,
-                         const fs::path &buildDirRelativePath) {
+                         const fs::path &testDirRelPath,
+                         const fs::path &reportDirRelPath,
+                         const fs::path &buildDirRelPath,
+                         const fs::path &itfRelPath) {
         auto result = std::make_unique<testsgen::ProjectContext>();
         result->set_projectname(projectName);
         result->set_projectpath(projectPath);
-        result->set_testdirpath(testDirPath);
-        result->set_builddirrelativepath(buildDirRelativePath);
+        result->set_testdirrelpath(testDirRelPath);
+        result->set_reportdirrelpath(reportDirRelPath);
+        result->set_builddirrelpath(buildDirRelPath);
+        result->set_itfrelpath(itfRelPath);
         return result;
     }
 
@@ -35,7 +39,10 @@ namespace GrpcUtils {
                           int32_t timeoutPerFunction,
                           int32_t timeoutPerTest,
                           bool useDeterministicSearcher,
-                          bool useStubs) {
+                          bool useStubs,
+                          ErrorMode errorMode,
+                          bool differentVariablesOfTheSameType,
+                          bool skipObjectWithoutSource) {
         auto result = std::make_unique<testsgen::SettingsContext>();
         result->set_generateforstaticfunctions(generateForStaticFunctions);
         result->set_verbose(verbose);
@@ -43,6 +50,9 @@ namespace GrpcUtils {
         result->set_timeoutpertest(timeoutPerTest);
         result->set_usedeterministicsearcher(useDeterministicSearcher);
         result->set_usestubs(useStubs);
+        result->set_errormode(errorMode);
+        result->set_differentvariablesofthesametype(differentVariablesOfTheSameType);
+        result->set_skipobjectwithoutsource(skipObjectWithoutSource);
         return result;
     }
 
@@ -54,7 +64,7 @@ namespace GrpcUtils {
         auto result = std::make_unique<testsgen::ProjectRequest>();
         result->set_allocated_projectcontext(projectContext.release());
         result->set_allocated_settingscontext(settingsContext.release());
-        for (const auto &path : sourcePaths) {
+        for (const auto &path: sourcePaths) {
             result->add_sourcepaths(path);
         }
         if (target.has_value()) {
@@ -184,8 +194,7 @@ namespace GrpcUtils {
                            const fs::path &output) {
         projectTarget.set_name(output.filename());
         projectTarget.set_path(output);
-        fs::path description =
-            fs::relative(output, projectContext.projectPath / projectContext.buildDirRelativePath);
+        fs::path description = fs::relative(output, projectContext.getBuildDirAbsPath());
         projectTarget.set_description(description);
     }
 

@@ -12,6 +12,11 @@
 #include <string>
 
 namespace PrinterUtils {
+    const std::string constCast = "template<typename T>\n"
+                                  "T& constCast(const T &val) {\n"
+                                  "    return const_cast<T&>(val);\n"
+                                  "}\n";
+
     const std::string fromBytes = "template<typename T, size_t N>\n"
                                   "T from_bytes(const char (&bytes)[N]) {\n"
                                   "    T result;\n"
@@ -62,31 +67,36 @@ namespace PrinterUtils {
 
     std::string convertToBytesFunctionName(std::string const &typeName);
 
-    std::string convertBytesToUnion(const std::string &typeName, const std::string &bytes);
+    std::string convertBytesToStruct(const std::string &typeName, const std::string &bytes);
 
     std::string wrapperName(const std::string &declName,
                             utbot::ProjectContext const &projectContext,
                             const fs::path &sourceFilePath);
 
+    std::string getterName(const std::string &wrapperName);
+
+    std::string getterDecl(const std::string &returnTypeName,
+                           const std::string &wrapperName);
+
     std::string getFieldAccess(const std::string &objectName, const types::Field &field);
+
+    std::string getConstQualifier(bool constQualifiedValue);
 
     std::string fillVarName(std::string const &temp, std::string const &varName);
 
-    std::string getFunctionPointerStubName(const std::optional<std::string> &scopeName,
-                                           const std::string &methodName,
-                                           const std::string &paramName,
-                                           bool omitSuffix = false);
+    void appendIndicesToVarName(std::string &varName, const std::vector<size_t> &sizes, size_t offset);
 
-    std::string getFunctionPointerAsStructFieldStubName(const std::string &structName,
-                                                        const std::string &fieldName,
-                                                        bool omitSuffix = false);
+    void appendConstCast(std::string &varName);
 
     std::string getKleePrefix(bool forKlee);
 
     std::string wrapUserValue(const testsgen::ValidationType &type, const std::string &value);
 
+    std::string getPointerMangledName(const std::string &name);
     std::string getParamMangledName(const std::string &paramName, const std::string &methodName);
     std::string getReturnMangledName(const std::string &methodName);
+    std::string getReturnMangledTypeName(const std::string& methodName);
+    std::string getEnumReturnMangledTypeName(const std::string& methodName);
 
     std::string getEqualString(const std::string &lhs, const std::string &rhs);
     std::string getDereferencePointer(const std::string &name, const size_t depth);
@@ -94,15 +104,21 @@ namespace PrinterUtils {
 
     std::string initializePointer(const std::string &type,
                                   const std::string &value,
-                                  size_t additionalPointersCount);
+                                  size_t additionalPointersCount,
+                                  bool pointerToConstQualifiedValue);
 
     std::string initializePointerToVar(const std::string &type,
                                        const std::string &varName,
-                                       size_t additionalPointersCount);
+                                       size_t additionalPointersCount,
+                                       bool pointerToConstQualifiedValue);
 
     std::string generateNewVar(int cnt);
 
     std::string getFileParamKTestJSON(char fileName);
+    std::string getFileReadBytesParamKTestJSON(char fileName);
+    std::string getFileWriteBytesParamKTestJSON(char fileName);
+
+    void removeThreadLocalQualifiers(std::string &decl);
 
     const std::string LAZYRENAME = "utbotInnerVar";
     const std::string UTBOT_ARGC = "utbot_argc";

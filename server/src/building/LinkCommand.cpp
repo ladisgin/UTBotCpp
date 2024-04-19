@@ -62,18 +62,20 @@ namespace utbot {
     }
 
     bool LinkCommand::isArchiveCommand() const {
-        return StringUtils::contains(getBuildTool().filename().c_str(), "ar");
+        return StringUtils::contains(getBuildTool().filename().c_str(), "ld") ||
+               StringUtils::contains(getBuildTool().filename().c_str(), "ar");
     }
 
     bool LinkCommand::isSharedLibraryCommand() const {
-        return CollectionUtils::contains(commandLine, "-shared");
+        return StringUtils::contains(getBuildTool().filename().c_str(), "ld") ||
+               CollectionUtils::contains(commandLine, "-shared");
     }
 
     void LinkCommand::initOutput() {
         auto it = findOutput();
         if (it != commandLine.end()) {
             this->output = it;
-            *this->output = Paths::getCCJsonFileFullPath(*it, this->directory);
+            *this->output = Paths::getFileFullPath(*it, this->directory);
         } else if (isArchiveCommand()) {
             it = std::find_if(commandLine.begin(), commandLine.end(), [](const std::string &argument) {
                 return Paths::isStaticLibraryFile(argument);

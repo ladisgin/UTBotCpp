@@ -1,8 +1,8 @@
 #include "BordersFinder.h"
 
-#include "Paths.h"
 #include "clang-utils/ASTPrinter.h"
 #include "clang-utils/Matchers.h"
+#include "clang-utils/ClangUtils.h"
 #include "utils/CollectionUtils.h"
 #include "utils/CompilationUtils.h"
 
@@ -22,11 +22,9 @@ BordersFinder::BordersFinder(const fs::path &filePath,
 
 void BordersFinder::run(const MatchFinder::MatchResult &Result) {
     LOG_SCOPE_FUNCTION(MAX);
+    SourceManager &sourceManager = Result.Context->getSourceManager();
     if (const auto *ST = Result.Nodes.getNodeAs<clang::CXXRecordDecl>(Matchers::STRUCT_OR_CLASS_JUST_DECL)) {
-        SourceManager &sourceManager = Result.Context->getSourceManager();
-        fs::path path = sourceManager.getFileEntryForID(sourceManager.getMainFileID())
-                ->tryGetRealPathName()
-                .str();
+        fs::path path = ClangUtils::getSourceFilePath(sourceManager);
         auto borders = getBorders(sourceManager, ST->getSourceRange());
         if (!containsLine(borders) || (classBorder.has_value() && !(borders < classBorder.value()))) {
             return;
@@ -38,12 +36,8 @@ void BordersFinder::run(const MatchFinder::MatchResult &Result) {
         lineInfo.initialized = true;
         LOG_S(MAX) << "Class name: " << ST->getNameAsString();
         LOG_S(MAX) << "Class's borders: " << lineInfo.begin << ' ' << lineInfo.end;
-    } else if (const auto *FS = Result.Nodes.getNodeAs<FunctionDecl>(Matchers::FUNCTION_DEF)) {
-        SourceManager &sourceManager = Result.Context->getSourceManager();
-
-        fs::path path = sourceManager.getFileEntryForID(sourceManager.getMainFileID())
-                ->tryGetRealPathName()
-                .str();
+    } else if (const FunctionDecl *FS = ClangUtils::getFunctionOrConstructor(Result)) {
+        fs::path path = ClangUtils::getSourceFilePath(sourceManager);
         Stmt *currentStmt = FS->getBody();
         if ((currentStmt == nullptr) || !containsLine(getFunctionBordersLines(sourceManager, FS))) {
             return;
@@ -83,8 +77,8 @@ void BordersFinder::run(const MatchFinder::MatchResult &Result) {
         } else {
             lineInfo.scopeName = path.stem().string();
         }
-        lineInfo.methodName = FS->getNameAsString();
-        const clang::QualType realReturnType = FS->getReturnType().getCanonicalType();
+        lineInfo.methodName = FS->getQualifiedNameAsString();
+        clang::QualType realReturnType = ClangUtils::getReturnType(FS, Result);
         lineInfo.functionReturnType = ParamsHandler::getType(realReturnType, realReturnType, sourceManager);
         lineInfo.initialized = true;
 
@@ -122,11 +116,11 @@ BordersFinder::Borders BordersFinder::getFunctionBordersLines(const SourceManage
 }
 
 BordersFinder::Borders BordersFinder::getStmtBordersLines(const SourceManager &srcMng, const Stmt *st) {
-    return getStmtBordersLinesDynamic(srcMng, clang::ast_type_traits::DynTypedNode::create(*st));
+    return getStmtBordersLinesDynamic(srcMng, clang::DynTypedNode::create(*st));
 }
 
 BordersFinder::Borders BordersFinder::getStmtBordersLinesDynamic(const SourceManager &srcMng,
-                                                                 const clang::ast_type_traits::DynTypedNode st) {
+                                                                 const clang::DynTypedNode st) {
     auto sourceRange = st.getSourceRange();
     return getBorders(srcMng, sourceRange);
 }
@@ -147,6 +141,8 @@ bool BordersFinder::containsLine(BordersFinder::Borders b) const {
 void BordersFinder::findFunction() {
     MatchFinder finder;
     finder.addMatcher(Matchers::functionDefinitionMatcher, this);
+    finder.addMatcher(Matchers::constructorDefinitionMatcher, this);
+    finder.addMatcher(Matchers::memberConstructorDefinitionMatcher, this);
     auto factory = clang::tooling::newFrontendActionFactory(&finder);
     clangToolRunner.run(lineInfo.filePath, factory.get());
 }

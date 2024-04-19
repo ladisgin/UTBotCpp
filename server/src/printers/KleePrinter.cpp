@@ -5,9 +5,11 @@
 #include "Paths.h"
 #include "exceptions/NoSuchTypeException.h"
 #include "exceptions/UnImplementedException.h"
+#include "testgens/BaseTestGen.h"
 #include "utils/CollectionUtils.h"
 #include "utils/FileSystemUtils.h"
 #include "utils/KleeUtils.h"
+#include "utils/StubsUtils.h"
 #include "visitors/KleeAssumeParamVisitor.h"
 #include "visitors/KleeAssumeReturnValueVisitor.h"
 
@@ -28,8 +30,9 @@ static const std::string CALLOC_DECLARATION = "extern\n"
 
 printer::KleePrinter::KleePrinter(const types::TypesHandler *typesHandler,
                                   std::shared_ptr<BuildDatabase> buildDatabase,
-                                  utbot::Language srcLanguage)
-    : Printer(srcLanguage), typesHandler(typesHandler), buildDatabase(std::move(buildDatabase)) {
+                                  utbot::Language srcLanguage,
+                                  const BaseTestGen *testGen)
+    : Printer(srcLanguage), typesHandler(typesHandler), buildDatabase(std::move(buildDatabase)), testGen(testGen) {
 }
 
 void KleePrinter::writePosixWrapper(const Tests &tests,
@@ -43,21 +46,24 @@ void KleePrinter::writePosixWrapper(const Tests &tests,
     strFunctionCall(PrinterUtils::POSIX_CHECK_STDIN_READ, {});
     strReturn(KleeUtils::RESULT_VARIABLE_NAME);
     closeBrackets(1);
-    ss << NL;
+    ss << printer::NL;
 }
+
 
 void KleePrinter::genOpenFiles(const tests::Tests::MethodDescription &testMethod) {
     char fileName = 'A';
-    for (const auto &param : testMethod.params) {
+    for (const auto &param: testMethod.params) {
         if (param.type.isFilePointer()) {
             std::string strFileName(1, fileName++);
             if (fileName > 'A' + types::Type::symFilesCount) {
-                throw UnImplementedException("Number of files is too much.");
+                std::string message = "Number of files is too much.";
+                LOG_S(ERROR) << message;
+                throw UnImplementedException(message);
             }
 
             strDeclareVar(param.type.typeName(), param.name,
                           constrFunctionCall("fopen",
-                                             { StringUtils::wrapQuotations(strFileName), "\"r\"" },
+                                             {StringUtils::wrapQuotations(strFileName), "\"r\""},
                                              "", std::nullopt, false));
         }
     }
@@ -77,6 +83,7 @@ void KleePrinter::writeTestedFunction(const Tests &tests,
     declTestEntryPoint(tests, testMethod, isWrapped);
     genOpenFiles(testMethod);
     genGlobalParamsDeclarations(testMethod);
+    genInitCall(testMethod);
     genParamsDeclarations(testMethod, filterAllWithoutFile);
     genPostGlobalSymbolicVariables(testMethod);
     genPostParamsSymbolicVariables(testMethod, filterAllWithoutFile);
@@ -87,9 +94,10 @@ void KleePrinter::writeTestedFunction(const Tests &tests,
     }
     genGlobalsKleeAssumes(testMethod);
     genPostParamsKleeAssumes(testMethod, filterAllWithoutFile);
+    genTearDownCall(testMethod);
     strReturn("0");
     closeBrackets(1);
-    ss << NL;
+    ss << printer::NL;
 }
 
 fs::path KleePrinter::writeTmpKleeFile(
@@ -113,7 +121,7 @@ fs::path KleePrinter::writeTmpKleeFile(
     LOG_S(DEBUG) << "Writing tmpKleeFile for " << testedMethod << " inside " << tests.sourceFilePath;
 
     bool hasMethod = false;
-    for (const auto &[methodName,testMethod ]: tests.methods) {
+    for (const auto &[methodName, testMethod]: tests.methods) {
         if (methodFilter(testMethod)) {
             hasMethod = true;
         }
@@ -137,18 +145,30 @@ fs::path KleePrinter::writeTmpKleeFile(
         strDeclareVar("int", PrinterUtils::KLEE_PATH_FLAG, "0");
     }
 
-    strInclude("klee/klee.h") << NL;
-    ss << CALLOC_DECLARATION << NL;
+    strInclude("klee/klee.h") << printer::NL;
+    ss << CALLOC_DECLARATION << printer::NL;
     writeStubsForStructureFields(tests);
+    writeAccessPrivateMacros(typesHandler, tests, false,
+                             [methodFilter, onlyForOneClass, onlyForOneFunction, testedMethod, testedClass](
+                                     tests::Tests::MethodDescription const &testMethod) {
+                                 bool filter = methodFilter(testMethod);
+                                 bool forThisFunction = !onlyForOneFunction || testMethod.name == testedMethod;
+                                 bool forThisClass = !onlyForOneClass || !testMethod.isClassMethod() ||
+                                                     testMethod.classObj->type.typeName() == testedClass;
+                                 return filter && forThisFunction && forThisClass;
+                             });
 
-    writeAccessPrivateMacros(typesHandler, tests, false);
+    strDeclareSetOfVars(tests.externVariables);
+    ss << printer::NL;
 
-    for (const auto &[methodName, testMethod] : tests.methods) {
+    for (const auto &[methodName, testMethod]: tests.methods) {
         if (!methodFilter(testMethod)) {
             continue;
         }
-        if ((onlyForOneFunction && methodName != testedMethod) ||
-            (onlyForOneClass && testMethod.isClassMethod() && testMethod.classObj->type.typeName() != testedClass)) {
+        if (onlyForOneFunction && methodName != testedMethod) {
+            continue;
+        }
+        if (onlyForOneClass && testMethod.isClassMethod() && testMethod.classObj->type.typeName() != testedClass) {
             continue;
         }
         try {
@@ -288,19 +308,19 @@ std::string KleePrinter::addTestLineFlag(const std::shared_ptr<LineInfo> &lineIn
         }
         if (lineCounter == lineInfo->begin + lineInfo->insertAfter + 1) {
             if (lineInfo->wrapInBrackets) {
-                ss << "}" << NL;
+                ss << "}" << printer::NL;
             }
         }
         if (lineCounter == lineInfo->begin) {
             if (needAssertion) {
                 ss << "#pragma push_macro(\"assert\")\n";
-                ss << "#define assert(expr) if (!(expr)) {" << PrinterUtils::KLEE_PATH_FLAG << " = 1;}" << NL;
+                ss << "#define assert(expr) if (!(expr)) {" << PrinterUtils::KLEE_PATH_FLAG << " = 1;}" << printer::NL;
             }
         }
-        ss << currentLine << NL;
+        ss << currentLine << printer::NL;
         if (lineCounter == lineInfo->begin) {
             if (needAssertion) {
-                ss << "#pragma pop_macro(\"assert\")" << NL;
+                ss << "#pragma pop_macro(\"assert\")" << printer::NL;
             }
         }
         lineCounter++;
@@ -353,7 +373,7 @@ void KleePrinter::genGlobalParamsDeclarations(const Tests::MethodDescription &te
                 strAssignVar(param.name, kleeParam.name);
             }
         }
-        genConstraints(kleeParam, testMethod.name);
+        genConstraints(kleeParam);
     }
 }
 
@@ -372,7 +392,11 @@ void KleePrinter::genParamsDeclarations(
                 .str();
         ss << constraintsBlock;
     }
+    std::unordered_map<std::string , std::vector<std::string>>typesToNames;
     for (const auto &param : testMethod.params) {
+        if(testGen->settingsContext.differentVariablesOfTheSameType){
+            typesToNames[param.type.typeName()].push_back(param.name);
+        }
         if (!filter(param)) {
             continue;
         }
@@ -382,9 +406,14 @@ void KleePrinter::genParamsDeclarations(
             continue;
         }
         auto paramType =
-            kleeParam.type.maybeJustPointer() ? kleeParam.type.baseTypeObj() : kleeParam.type;
+                kleeParam.type.maybeJustPointer() ? kleeParam.type.baseTypeObj() : kleeParam.type;
         strKleeMakeSymbolic(paramType, kleeParam.name, param.name, !isArray);
-        genConstraints(kleeParam, testMethod.name);
+        if (testGen->settingsContext.differentVariablesOfTheSameType &&
+            typesToNames[param.type.typeName()].size() <= 3) {
+            genConstraints(kleeParam, typesToNames[param.type.typeName()]);
+        } else {
+            genConstraints(kleeParam);
+        }
         genTwoDimPointers(param, true);
         commentBlockSeparator();
     }
@@ -393,13 +422,15 @@ void KleePrinter::genParamsDeclarations(
 bool KleePrinter::genParamDeclaration(const Tests::MethodDescription &testMethod,
                                       const Tests::MethodParam &param) {
     std::string stubFunctionName =
-        PrinterUtils::getFunctionPointerStubName(testMethod.isClassMethod() ? std::make_optional(testMethod.classObj->name) : std::nullopt,
-                                                 testMethod.name, param.name);
+            StubsUtils::getFunctionPointerStubName(
+                    testMethod.isClassMethod() ? std::make_optional(testMethod.classObj->name) : std::nullopt,
+                    testMethod.name, param.name, false);
     if (types::TypesHandler::isPointerToFunction(param.type)) {
         strDeclareVar(getTypedefFunctionPointer(testMethod.name, param.name, false), param.name,
                       stubFunctionName, param.alignment);
     } else if (types::TypesHandler::isArrayOfPointersToFunction(param.type)) {
-        strDeclareArrayOfFunctionPointerVar(getTypedefFunctionPointer(testMethod.name, param.name, false), param.name, stubFunctionName);
+        strDeclareArrayOfFunctionPointerVar(getTypedefFunctionPointer(testMethod.name, param.name, false), param.name,
+                                            stubFunctionName);
     } else if (types::TypesHandler::isObjectPointerType(param.type)) {
         return genPointerParamDeclaration(param);
     } else if (types::TypesHandler::isArrayType(param.type)) {
@@ -447,7 +478,10 @@ void KleePrinter::genReturnDeclaration(const Tests::MethodDescription &testMetho
                           : testMethod.returnType;
     bool maybeArray = returnType.maybeReturnArray();
     bool isPointer = testMethod.returnType.isObjectPointer();
-    strDeclareVar(returnType.baseType(), KleeUtils::RESULT_VARIABLE_NAME, std::nullopt, std::nullopt, false);
+    std::string type = typesHandler->isAnonymousEnum(returnType)
+                           ? "int"
+                           : returnType.baseType();
+    strDeclareVar(type, KleeUtils::RESULT_VARIABLE_NAME, std::nullopt, std::nullopt, false);
     makeBracketsForStrPredicate(predicateInfo);
     if (maybeArray) {
         size_t size = types::TypesHandler::getElementsNumberInPointerOneDim(PointerUsage::RETURN);
@@ -475,10 +509,10 @@ void KleePrinter::genParamsKleeAssumes(
     }
 }
 
-void KleePrinter::genConstraints(const Tests::MethodParam &param, const std::string &methodName) {
+void KleePrinter::genConstraints(const Tests::MethodParam &param, const std::vector<std::string>& names) {
     KleeConstraintsPrinter constraintsPrinter(typesHandler, srcLanguage);
     constraintsPrinter.setTabsDepth(tabsDepth);
-    const auto constraintsBlock = constraintsPrinter.genConstraints(param).str();
+    const auto constraintsBlock = constraintsPrinter.genConstraints(param, names).str();
     ss << constraintsBlock;
 }
 

@@ -53,6 +53,8 @@ namespace StringUtils {
 
     void replaceAll(std::string &str, const std::string &from, const std::string &to);
 
+    void replaceColon(std::string &str);
+
     /**
      * Returns true if char literal can be printed to .cpp file as is, false otherwise.
      * @param value - given character code
@@ -85,6 +87,18 @@ namespace StringUtils {
     T stot(const std::string&) {
         return T();
     }
+    template<> int stot(const std::string& s);
+    template<> long stot(const std::string& s);
+    template<> long long stot(const std::string& s);
+    template<> unsigned int stot(const std::string& s);
+    template<> unsigned long stot(const std::string& s);
+    template<> unsigned long long stot(const std::string& s);
+    template<> float stot(const std::string& s);
+    template<> double stot(const std::string& s);
+    template<> long double stot(const std::string& s);
+    template<> bool stot(const std::string& s);
+    template<> __int128 stot(const std::string& s);
+    template<> unsigned __int128 stot(const std::string& s);
 
     std::string wrapQuotations(const std::string &s);
 }

@@ -77,6 +77,7 @@ void KleeRunner::runKlee(const std::vector<tests::TestMethod> &testMethods,
                 LOG_S(WARNING) << FileNotPresentedInCommandsException::createMessage(filePath);
                 return;
             } else {
+                LOG_S(ERROR) << FileNotPresentedInCommandsException::createMessage(filePath);
                 throw FileNotPresentedInCommandsException(filePath);
             }
         }
@@ -85,6 +86,7 @@ void KleeRunner::runKlee(const std::vector<tests::TestMethod> &testMethods,
                 LOG_S(WARNING) << FileNotPresentedInArtifactException::createMessage(filePath);
                 return;
             } else {
+                LOG_S(ERROR) << FileNotPresentedInArtifactException::createMessage(filePath);
                 throw FileNotPresentedInArtifactException(filePath);
             }
         }
@@ -105,7 +107,7 @@ void KleeRunner::runKlee(const std::vector<tests::TestMethod> &testMethods,
         }
         auto kleeStats = writeKleeStats(Paths::kleeOutDirForFilePath(projectContext, filePath));
         generator->parseKTestsToFinalCode(projectContext, tests, methodNameToReturnTypeMap, ktests,
-                                          lineInfo, settingsContext.verbose);
+                                          lineInfo, settingsContext.verbose, settingsContext.errorMode);
         generationStats.addFileStats(kleeStats, tests);
 
         sarif::sarifAddTestsToResults(projectContext, tests, sarifResults);
@@ -114,13 +116,13 @@ void KleeRunner::runKlee(const std::vector<tests::TestMethod> &testMethods,
     std::function<void()> prepareTotal = [&]() {
         testsWriter->writeReport(sarif::sarifPackResults(sarifResults),
                                  "Sarif Report was created",
-                                 Paths::getUTBotReportDir(projectContext) / sarif::SARIF_FILE_NAME);
+                                 projectContext.getReportDirAbsPath() / sarif::SARIF_FILE_NAME);
     };
 
     testsWriter->writeTestsWithProgress(
         testsMap,
         "Running klee",
-        projectContext.testDirPath,
+        projectContext.getTestDirAbsPath(),
         std::move(prepareTests),
         std::move(prepareTotal));
 }
@@ -138,35 +140,35 @@ static void processMethod(MethodKtests &ktestChunk,
     bool hasError = false;
     for (auto const &entry : fs::directory_iterator(kleeOut)) {
         auto const &path = entry.path();
-        if (Paths::isKtestJson(path)) {
+        if (Paths::isKtest(path)) {
             if (Paths::hasEarly(path)) {
                 hasTimeout = true;
             } else if (Paths::hasInternalError(path)) {
                 hasError = true;
             } else {
-                std::unique_ptr<TestCase, decltype(&TestCase_free)> ktestData{
-                    TC_fromFile(path.c_str()), TestCase_free
+                std::unique_ptr<KTest, decltype(&kTest_free)> ktestData{
+                    kTest_fromFile(path.c_str()), kTest_free
                 };
                 if (ktestData == nullptr) {
-                    LOG_S(WARNING) << "Unable to open .ktestjson file";
+                    LOG_S(WARNING) << "Unable to open .ktest file";
                     continue;
                 }
                 const std::vector<fs::path> &errorDescriptorFiles =
-                        Paths::getErrorDescriptors(path);
+                    Paths::getErrorDescriptors(path);
 
                 UTBotKTest::Status status = errorDescriptorFiles.empty()
-                                            ? UTBotKTest::Status::SUCCESS
-                                            : UTBotKTest::Status::FAILED;
-                std::vector<ConcretizedObject> kTestObjects(
-                    ktestData->objects, ktestData->objects + ktestData->n_objects);
+                                                ? UTBotKTest::Status::SUCCESS
+                                                : UTBotKTest::Status::FAILED;
+                std::vector<KTestObject> kTestObjects(ktestData->objects,
+                                                      ktestData->objects + ktestData->numObjects);
 
-                std::vector<UTBotKTestObject> objects = CollectionUtils::transform(
-                    kTestObjects, [](const ConcretizedObject &kTestObject) {
+                std::vector<UTBotKTestObject> objects =
+                    CollectionUtils::transform(kTestObjects, [](const KTestObject &kTestObject) {
                         return UTBotKTestObject{ kTestObject };
                     });
 
-                std::vector<std::string> errorDescriptors = CollectionUtils::transform(
-                    errorDescriptorFiles, [](const fs::path &errorFile) {
+                std::vector<std::string> errorDescriptors =
+                    CollectionUtils::transform(errorDescriptorFiles, [](const fs::path &errorFile) {
                         std::ifstream fileWithError(errorFile.c_str(), std::ios_base::in);
                         std::string content((std::istreambuf_iterator<char>(fileWithError)),
                                             std::istreambuf_iterator<char>());
@@ -209,29 +211,37 @@ std::pair<std::vector<std::string>, fs::path>
 KleeRunner::createKleeParams(const tests::TestMethod &testMethod,
                              const tests::Tests &tests,
                              const std::string &methodNameOrEmptyForFolder) {
-    fs::path kleeOut = Paths::kleeOutDirForEntrypoints(projectContext,
-                                                       tests.sourceFilePath,
+    fs::path kleeOut = Paths::kleeOutDirForEntrypoints(projectContext, tests.sourceFilePath,
                                                        methodNameOrEmptyForFolder);
     fs::create_directories(kleeOut.parent_path());
 
-    std::vector<std::string> argvData = { "klee",
-                                          "--entry-point=" + KleeUtils::entryPointFunction(tests, testMethod.methodName, true),
-                                          "--libc=klee",
-                                          "--utbot",
-                                          "--posix-runtime",
-                                          "--type-system=CXX",
-                                          "--fp-runtime",
-                                          "--only-output-states-covering-new",
-                                          "--allocate-determ",
-                                          "--external-calls=all",
-                                          "--timer-interval=1000ms",
-                                          "--bcov-check-interval=8s",
-                                          "-istats-write-interval=5s",
-                                          "--disable-verify",
-                                          "--check-div-zero=false",
-                                          "--check-overshift=false",
-                                          "--skip-not-lazy-and-symbolic-pointers",
-                                          "--output-dir=" + kleeOut.string()};
+    std::vector<std::string> argvData = {
+        "klee",
+        "--entry-point=" + KleeUtils::entryPointFunction(tests, testMethod.methodName, true),
+        "--libc=klee",
+        "--utbot",
+        "--posix-runtime",
+        "--skip-not-lazy-initialized",
+        "--min-number-elements-li=1",
+        "--fp-runtime",
+        "--only-output-states-covering-new",
+        "--allocate-determ",
+        "--external-calls=all",
+        "--timer-interval=1000ms",
+        "--use-cov-check=instruction-based",
+        "-istats-write-interval=5s",
+        "--disable-verify",
+        "--check-div-zero=false",
+        "--check-overshift=false",
+        "--skip-not-symbolic-objects",
+        "--use-tbaa",
+        "--ubsan-runtime",
+        "--output-dir=" + kleeOut.string()
+    };
+    if (Paths::isCXXFile(testMethod.sourceFilePath)) {
+        argvData.emplace_back("--use-advanced-type-system=true");
+//        argvData.emplace_back("--libcxx=true");
+    }
     if (settingsContext.useDeterministicSearcher) {
         argvData.emplace_back("--search=dfs");
     }
@@ -240,7 +250,7 @@ KleeRunner::createKleeParams(const tests::TestMethod &testMethod,
         argvData.emplace_back("--allocate-determ-size=" + std::to_string(1));
         argvData.emplace_back("--allocate-determ-start-address=" + std::to_string(0x10000));
     }
-    return {argvData, kleeOut};
+    return { argvData, kleeOut };
 }
 
 void KleeRunner::addTailKleeInitParams(std::vector<std::string> &argvData, const std::string &bitcodeFilePath)
@@ -275,7 +285,7 @@ void KleeRunner::processBatchWithoutInteractive(const std::vector<tests::TestMet
             std::vector<char *> cargv, cenvp;
             std::vector<std::string> tmp;
             ExecUtils::toCArgumentsPtr(argvData, tmp, cargv, cenvp, false);
-            LOG_S(DEBUG) << "Klee command :: " + StringUtils::joinWith(argvData, " ");
+            LOG_S(DEBUG) << "Klee command: " + StringUtils::joinWith(argvData, " ");
             MEASURE_FUNCTION_EXECUTION_TIME
 
             RunKleeTask task(cargv.size(), cargv.data(), settingsContext.timeoutPerFunction);
@@ -331,7 +341,7 @@ void KleeRunner::processBatchWithInteractive(const std::vector<tests::TestMethod
         std::vector<std::string> tmp;
         ExecUtils::toCArgumentsPtr(argvData, tmp, cargv, cenvp, false);
 
-        LOG_S(DEBUG) << "Klee command :: " + StringUtils::joinWith(argvData, " ");
+        LOG_S(DEBUG) << "Klee command: " + StringUtils::joinWith(argvData, " ");
         MEASURE_FUNCTION_EXECUTION_TIME
 
         RunKleeTask task(cargv.size(),

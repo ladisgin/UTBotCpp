@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <vector>
 
+#include <llvm/ADT/StringRef.h>
+
 namespace fs {
 
     using file_time_type = std::filesystem::file_time_type;
@@ -20,6 +22,8 @@ namespace fs {
         path(const std::string &s) : path_(normalizedTrimmed(s)) {}
 
         path(const char *s) : path_(normalizedTrimmed(s)) {}
+
+        path(llvm::StringRef s) : path_(normalizedTrimmed(s.str())) {}
 
         path root_path() const {
             return path(path_.root_path());
@@ -152,6 +156,9 @@ namespace fs {
         friend bool exists( const path& p );
         friend bool is_empty( const path& p );
         friend bool is_directory( const path& p );
+        friend bool is_symlink( const path& p );
+        friend bool is_absolute( const path& p );
+        friend path read_symlink( const path& p, std::error_code& ec);
         friend path relative( const path& p, const path& base);
         friend path canonical( const path& p );
         friend path weakly_canonical( const path& p );
@@ -257,6 +264,20 @@ namespace fs {
     inline bool is_directory( const path& p ) {
         return is_directory(p.path_);
     }
+
+    inline bool is_symlink(const path &p) {
+        return is_symlink(p.path_);
+    }
+
+    inline bool is_absolute(const path &p) {
+        return p.path_.is_absolute();
+    }
+
+    inline path read_symlink(const path &p, std::error_code &ec) {
+        return read_symlink(p.path_, ec);
+    }
+
+    path findInPATH(const path &p);
 
     inline path relative( const path& p, const path& base) {
         return path(relative(p.path_, base.path_));

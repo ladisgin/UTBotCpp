@@ -7,9 +7,11 @@ namespace printer {
 const std::string DefaultMakefilePrinter::TARGET_ALL = "all";
 const std::string DefaultMakefilePrinter::TARGET_BUILD = "build";
 const std::string DefaultMakefilePrinter::TARGET_RUN = "run";
+const std::string DefaultMakefilePrinter::TARGET_FORCE = ".FORCE";
 
 DefaultMakefilePrinter::DefaultMakefilePrinter() {
     writeCopyrightHeader();
+    declareTarget(TARGET_FORCE, {}, {});
 }
 
 void DefaultMakefilePrinter::comment(std::string const &message) {
@@ -44,7 +46,7 @@ void DefaultMakefilePrinter::declareInclude(const std::string &otherMakefileName
 }
 
 void DefaultMakefilePrinter::writeCopyrightHeader() {
-    ss << Copyright::GENERATED_MAKEFILE_HEADER << NL;
+    ss << Copyright::GENERATED_MAKEFILE_HEADER << printer::NL;
 }
 
 }

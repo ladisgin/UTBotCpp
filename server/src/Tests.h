@@ -10,9 +10,10 @@
 #include "utils/SizeUtils.h"
 #include "json.hpp"
 #include <klee/KTest.h>
-#include <klee/TestCase.h>
 #include <tsl/ordered_map.h>
 #include <tsl/ordered_set.h>
+#include "Paths.h"
+#include "stubs/StubsStorage.h"
 
 #include <cassert>
 #include <climits>
@@ -25,6 +26,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <utils/ErrorInfo.h>
 
 using json = nlohmann::json;
 
@@ -50,7 +52,7 @@ namespace tests {
     struct UTBotKTestObject {
         std::string name;
         std::vector<char> bytes;
-        std::vector<Offset> offsetsInBytes;
+        std::vector<Pointer> pointers;
         size_t address;
         bool is_lazy = false;
 
@@ -58,17 +60,17 @@ namespace tests {
          * Constructs UTBotKTestObject
          * @param name object's name
          * @param bytes byte array associated with object
-         * @param offsets in bytes
+         * @param pointers vector of pointers
          * @param address object's address
          * @param is_lazy whether object is lazy
          */
         UTBotKTestObject(std::string name,
                          std::vector<char> bytes,
-                         std::vector<Offset> offsets,
+                         std::vector<Pointer> pointers,
                          size_t address,
                          bool is_lazy);
 
-        explicit UTBotKTestObject(const ConcretizedObject &kTestObject);
+        explicit UTBotKTestObject(const KTestObject &kTestObject);
     };
     struct UTBotKTest {
         enum class Status {
@@ -78,6 +80,7 @@ namespace tests {
         std::vector<UTBotKTestObject> objects;
         Status status;
         std::vector<std::string> errorDescriptors;
+        ErrorInfo errorInfo;
 
         UTBotKTest(std::vector<UTBotKTestObject> objects,
                    const Status &status,
@@ -235,14 +238,20 @@ namespace tests {
                                  std::vector<std::shared_ptr<AbstractValueView>> _subViews,
                                  std::optional<std::string> _entryValue,
                                  bool _anonymous,
+                                 bool _isInit,
                                  bool _dirtyInit,
                                  size_t _fieldIndexToInitUnion)
             : AbstractValueView(std::move(_subViews))
             , entryValue(std::move(_entryValue))
             , structInfo(_structInfo)
             , anonymous(_anonymous)
+            , isInit(_isInit)
             , dirtyInit(_dirtyInit)
             , fieldIndexToInitUnion(_fieldIndexToInitUnion){}
+
+        bool isInitialized() const {
+            return isInit;
+        }
 
         bool isDirtyInit() const {
             return dirtyInit;
@@ -314,6 +323,7 @@ namespace tests {
         std::optional<std::string> entryValue;
 
         bool anonymous;
+        bool isInit;
         bool dirtyInit;
         size_t fieldIndexToInitUnion;
     };
@@ -336,6 +346,8 @@ namespace tests {
             TypeAndVarName(types::Type type, std::string varName)
                 : type(std::move(type)), varName(std::move(varName)) {
             }
+
+            bool operator<(const TypeAndVarName &) const;
         };
 
         struct MethodParam {
@@ -372,6 +384,18 @@ namespace tests {
                        this->underscoredName() :
                        this->name;
             }
+
+            [[nodiscard]] std::string getFunctionParamDecl() const {
+                if (type.isTwoDimensionalPointer() && types::TypesHandler::isVoid(type.baseTypeObj())) {
+                    std::string qualifier = PrinterUtils::getConstQualifier(type.isConstQualifiedValue());
+                    return StringUtils::stringFormat("(%svoid **) %s", qualifier, name);
+                } else if (type.isRValueReference()) {
+                    return "std::move(" + name + ")";
+                } else if (type.maybeJustPointer() && !type.isFilePointer() ) {
+                    return "&" + name;
+                }
+                return name;
+            }
         };
 
         struct TestCaseParamValue {
@@ -380,14 +404,21 @@ namespace tests {
             std::shared_ptr<AbstractValueView> view;
             std::vector<MethodParam> lazyParams;
             std::vector<TestCaseParamValue> lazyValues;
+
             TestCaseParamValue() = default;
 
             TestCaseParamValue(std::string _name,
                                const std::optional<size_t> &_alignment,
                                std::shared_ptr<AbstractValueView> _view)
-                : name(std::move(_name)),
-                  alignment(_alignment),
-                  view(std::move(_view)) {}
+                    : name(std::move(_name)),
+                      alignment(_alignment),
+                      view(std::move(_view)) {}
+        };
+
+        struct FileInfo {
+            std::string data;
+            int readBytes;
+            int writeBytes;
         };
 
         struct TestCaseDescription {
@@ -400,7 +431,6 @@ namespace tests {
             std::vector<MethodParam> stubValuesTypes;
             std::vector<TestCaseParamValue> stubValues;
 
-            MapAddressName lazyAddressToName;
             std::vector<InitReference> lazyReferences;
 
             std::vector<TestCaseParamValue> funcParamValues;
@@ -408,10 +438,11 @@ namespace tests {
             TestCaseParamValue returnValue;
             TestCaseParamValue functionReturnNotNullValue;
             TestCaseParamValue kleePathFlagSymbolicValue;
-            std::optional <TestCaseParamValue> stdinValue = std::nullopt;
-            std::optional <std::vector<TestCaseParamValue>> filesValues = std::nullopt;
+            std::optional<TestCaseParamValue> stdinValue = std::nullopt;
+            std::optional<std::vector<FileInfo>> filesValues;
             std::optional<TestCaseParamValue> classPreValues;
             std::optional<TestCaseParamValue> classPostValues;
+            ErrorInfo errorInfo;
         };
 
         struct MethodTestCase {
@@ -421,12 +452,10 @@ namespace tests {
 
             std::vector<TestCaseParamValue> globalPreValues;
             std::vector<TestCaseParamValue> globalPostValues;
-            std::optional <TestCaseParamValue> stdinValue;
-            std::optional <std::vector<TestCaseParamValue>> filesValues = std::nullopt;
+            std::optional<TestCaseParamValue> stdinValue;
+            std::optional<std::vector<FileInfo>> filesValues;
             std::vector<InitReference> lazyReferences;
             std::vector<UTBotKTestObject> objects;
-
-            MapAddressName lazyAddressToName;
 
             std::vector<MethodParam> stubValuesTypes;
             std::vector<TestCaseParamValue> stubValues;
@@ -439,8 +468,20 @@ namespace tests {
             std::optional<TestCaseParamValue> classPreValues;
             std::optional<TestCaseParamValue> classPostValues;
             std::vector<std::string> errorDescriptors;
+            ErrorInfo errorInfo;
 
             [[nodiscard]] bool isError() const;
+
+            FileInfo getFileByName(char fileName) const {
+                return filesValues.value()[fileName - 'A'];
+            }
+
+            std::string getError() const {
+                if (!errorDescriptors.empty()) {
+                    return errorDescriptors[0].substr(0, errorDescriptors[0].find('\n'));
+                }
+                return "";
+            }
         };
 
         struct Modifiers {
@@ -449,13 +490,23 @@ namespace tests {
             bool isInline;
         };
 
+        enum ConstructorInfo {
+            NOT_A_CONSTRUCTOR = 0,
+            CONSTRUCTOR = 1,
+            MOVE_CONSTRUCTOR = 2
+        };
+
         struct MethodDescription {
             std::optional<MethodParam> classObj;
             std::string name;
+            std::string callName;
             typedef std::unordered_map<std::string, std::string> SuiteNameToCodeTextMap;
             std::string stubsText;
             SuiteNameToCodeTextMap codeText;
             std::string paramsString;
+
+            std::string initFunction = "";
+            std::string teardownFunction = "";
 
             types::Type returnType;
             bool hasIncompleteReturnType = false;
@@ -469,9 +520,15 @@ namespace tests {
 
             typedef std::unordered_map<std::string, std::shared_ptr<types::FunctionInfo>> FPointerMap;
             FPointerMap functionPointers;
+            std::shared_ptr<StubsStorage> stubsParamStorage;
+            std::shared_ptr<StubsStorage> stubsStorage;
+
             std::vector<MethodTestCase> testCases;
             typedef std::unordered_map<std::string, std::vector<int>> SuiteNameToTestCasesMap;
             SuiteNameToTestCasesMap suiteTestCases;
+            types::AccessSpecifier accessSpecifier;
+
+            ConstructorInfo constructorInfo = ConstructorInfo::NOT_A_CONSTRUCTOR;
 
             bool operator==(const MethodDescription &other) const;
 
@@ -489,7 +546,7 @@ namespace tests {
                 });
             }
 
-            [[nodiscard]] types::FunctionInfo toFunctionInfo() {
+            [[nodiscard]] types::FunctionInfo toFunctionInfo() const {
                 types::FunctionInfo fInfo;
                 fInfo.isArray = false;
                 fInfo.name = name;
@@ -503,20 +560,12 @@ namespace tests {
             [[nodiscard]] static MethodDescription fromFunctionInfo(const types::FunctionInfo& fInfo) {
                 MethodDescription method;
                 method.name = fInfo.name;
+                method.callName = fInfo.name;
                 method.returnType = fInfo.returnType;
                 for (const auto& param: fInfo.params) {
                     method.params.emplace_back(param.type, param.name, std::nullopt);
                 }
                 return method;
-            }
-
-            [[nodiscard]] bool hasChangeable() const {
-                for (const auto& i : params) {
-                    if (i.isChangeable()) {
-                        return true;
-                    }
-                }
-                return false;
             }
 
             [[nodiscard]] bool isClassMethod() const {
@@ -535,6 +584,15 @@ namespace tests {
                     return std::make_optional(classObj->type.typeName());
                 }
                 return std::nullopt;
+            }
+
+            [[nodiscard]] bool isConstructor() const {
+                return constructorInfo == Tests::ConstructorInfo::CONSTRUCTOR ||
+                       constructorInfo == Tests::ConstructorInfo::MOVE_CONSTRUCTOR;
+            }
+
+            [[nodiscard]] bool isMoveConstructor() const {
+                return constructorInfo == Tests::ConstructorInfo::MOVE_CONSTRUCTOR;
             }
         };
 
@@ -558,6 +616,7 @@ namespace tests {
         fs::path testHeaderFilePath;
         fs::path testSourceFilePath;
 
+        std::set<TypeAndVarName> externVariables;
         std::vector<Include> srcFileHeaders;
         std::vector<Include> headersBeforeMainHeader;
         std::optional<Include> mainHeader;
@@ -620,9 +679,10 @@ namespace tests {
         struct RawKleeParam {
             std::string paramName;
             std::vector<char> rawData;
+            std::vector<Pointer> pointers;
 
-            RawKleeParam(std::string paramName, std::vector<char> rawData)
-                : paramName(std::move(paramName)), rawData(std::move(rawData)) {
+            RawKleeParam(std::string paramName, std::vector<char> rawData, std::vector<Pointer> pointers)
+                : paramName(std::move(paramName)), rawData(std::move(rawData)), pointers(pointers) {
             }
 
             [[nodiscard]] [[maybe_unused]] bool hasPrefix(const std::string &prefix) const {
@@ -671,17 +731,19 @@ namespace tests {
         testParameterView(const RawKleeParam &kleeParam,
                           const Tests::TypeAndVarName &param,
                           types::PointerUsage usage,
-                          const MapAddressName &fromAddressToName,
+                          const std::vector<UTBotKTestObject> &objects,
                           std::vector<InitReference> &initReferences,
                           const std::optional<const Tests::MethodDescription> &testingMethod = std::nullopt);
 
         std::shared_ptr<ArrayValueView> multiArrayView(const std::vector<char> &byteArray,
+                                                       const std::vector<Pointer> &lazyPointersArray,
                                                        const types::Type &type,
                                                        size_t arraySizeInBits,
                                                        size_t offsetInBits,
                                                        types::PointerUsage usage);
 
         std::shared_ptr<ArrayValueView> arrayView(const std::vector<char> &byteArray,
+                                                  const std::vector<Pointer> &lazyPointersArray,
                                                   const types::Type &type,
                                                   size_t arraySizeInBits,
                                                   size_t offsetInBits,
@@ -698,18 +760,20 @@ namespace tests {
                                                                  const std::string &fieldName);
 
         std::shared_ptr<StructValueView> structView(const std::vector<char> &byteArray,
+                                                    const std::vector<Pointer> &lazyPointersArray,
                                                     const types::StructInfo &curStruct,
                                                     size_t offsetInBits,
                                                     types::PointerUsage usage);
 
         std::shared_ptr<StructValueView> structView(const std::vector<char> &byteArray,
+                                                    const std::vector<Pointer> &lazyPointersArray,
                                                     const types::StructInfo &curStruct,
                                                     size_t offsetInBits,
                                                     types::PointerUsage usage,
                                                     const std::optional<const Tests::MethodDescription> &testingMethod,
                                                     const bool anonymous,
                                                     const std::string &name,
-                                                    const MapAddressName &fromAddressToName,
+                                                    const std::vector<UTBotKTestObject> &objects,
                                                     std::vector<InitReference> &initReferences);
 
         static std::shared_ptr<EnumValueView> enumView(const std::vector<char> &byteArray,
@@ -763,8 +827,9 @@ namespace tests {
                                    const Tests::MethodParam &param,
                                    std::vector<RawKleeParam> &rawKleeParams);
 
-        void processStubParamValue(Tests::TestCaseDescription &testCaseDescription,
-                                   const std::unordered_map<std::string, types::Type>& methodNameToReturnTypeMap,
+        void processStubParamValue(const Tests::MethodDescription &methodDescription,
+                                   Tests::TestCaseDescription &testCaseDescription,
+                                   const std::unordered_map<std::string, types::Type> &methodNameToReturnTypeMap,
                                    std::vector<RawKleeParam> &rawKleeParams);
 
         static void addToOrder(const std::vector<UTBotKTestObject> &objects,
@@ -772,27 +837,41 @@ namespace tests {
                                const types::Type &paramType,
                                Tests::TestCaseParamValue &paramValue,
                                std::vector<bool> &visited,
+                               std::vector<types::PointerUsage> &usages,
                                std::queue<JsonIndAndParam> &order);
 
         void assignTypeUnnamedVar(Tests::MethodTestCase &testCase,
-                                  const Tests::MethodDescription &methodDescription);
+                                  const Tests::MethodDescription &methodDescription,
+                                  std::vector<std::optional<Tests::TypeAndVarName>> &objects,
+                                  std::vector<types::PointerUsage> &usages);
 
         void assignTypeStubVar(Tests::MethodTestCase &testCase,
                                const Tests::MethodDescription &methodDescription);
 
-        size_t findFieldIndex(const types::StructInfo &structInfo, size_t offsetInBits);
+        void assignAllLazyPointers(
+            Tests::MethodTestCase &testCase,
+            const std::vector<std::optional<Tests::TypeAndVarName>> &objTypeAndName,
+            const std::vector<types::PointerUsage> &usages) const;
 
-        types::Type traverseLazyInStruct(std::vector<bool> &visited,
-                                         const types::Type &curVarType,
-                                         size_t offsetInBits,
-                                         const Tests::MethodTestCase &testCase,
-                                         const Tests::MethodDescription &methodDescription);
+        size_t findFieldIndex(const types::StructInfo &structInfo, size_t offsetInBits) const;
 
-        std::shared_ptr<AbstractValueView> getLazyPointerView(const MapAddressName &fromAddressToName,
-                                                              std::vector<InitReference> &initReferences,
-                                                              const std::string &name,
-                                                              std::string res,
-                                                              const types::Type &paramType) const;
+        Tests::TypeAndVarName traverseLazyInStruct(const types::Type &curVarType,
+                                                   size_t offsetInBits,
+                                                   const std::string &curVarName = "") const;
+
+        size_t getOffsetInStruct(Tests::TypeAndVarName &objTypeAndName,
+                                 size_t offsetInBits,
+                                 types::PointerUsage usage) const;
+
+        std::shared_ptr<AbstractValueView>
+        getLazyPointerView(const std::vector<UTBotKTestObject> &objects,
+                           std::vector<InitReference> &initReferences,
+                           const std::string &name,
+                           std::string res,
+                           const types::Type &paramType,
+                           bool lazyPointer) const;
+
+        bool pointToStruct(const types::Type &pointerType, const UTBotKTestObject &goal) const;
 
         void
         getTestParamView(const Tests::MethodDescription &methodDescription, const std::vector<RawKleeParam> &rawKleeParams,
@@ -813,8 +892,7 @@ namespace tests {
     std::enable_if_t<std::is_floating_point<T>::value, std::string>
     primitiveValueToString(T value) {
         std::stringstream ss;
-        ss << std::scientific;
-        ss << value;
+        ss << std::scientific << value;
         return ss.str();
     }
 
@@ -898,5 +976,5 @@ namespace tests {
                                         const std::string &typeName,
                                         size_t offsetInBits,
                                         size_t lenInBits);
-}
+} // tests
 #endif // UNITTESTBOT_TESTS_H

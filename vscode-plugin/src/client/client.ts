@@ -1,6 +1,7 @@
 /* eslint-disable no-async-promise-executor */
 import * as grpc from 'grpc';
 import * as vs from 'vscode';
+import * as vsUtils from "../utils/vscodeUtils";
 import * as os from 'os';
 import * as messages from '../config/notificationMessages';
 import { Prefs } from '../config/prefs';
@@ -130,10 +131,18 @@ export class Client {
             if (this.noConnectionEstablishedBefore) {
                 this.noConnectionEstablishedBefore = false;
                 await this.events.onDidConnectFirstTimeEventEmitter.fire();
+                await Promise.all([
+                    this.provideLogChannel(),
+                    this.provideGTestChannel()
+                ]);
             }
             if (!this.isConnectionEstablished()) {
                 messages.showInfoMessage(messages.successfullyConnected);
                 logger.info('Successfully connected to server');
+                await Promise.all([
+                    this.provideLogChannel(),
+                    this.provideGTestChannel()
+                ]);
             }
             if (this.newClient || !response.getLinked()) {
                 await Promise.all([
@@ -233,13 +242,12 @@ export class Client {
 
     private async writeLog(responseAny: any): Promise<void> {
         const logEntry = responseAny as LogEntry;
-        utbotUI.channels().outputServerLogChannel.append(logEntry.getMessage());
+        utbotUI.channels().outputServerLogChannel.append(logEntry.toString());
     }
 
     private async writeGTestLog(responseAny: any): Promise<void> {
         const gtestEntry = responseAny as LogEntry;
-        utbotUI.channels().outputGTestChannel.show(true);
-        utbotUI.channels().outputGTestChannel.appendLine(gtestEntry.getMessage());
+        utbotUI.channels().outputGTestChannel.appendLine(gtestEntry.toString());
     }
 
     private async provideLogChannel(): Promise<void> {
@@ -304,7 +312,7 @@ export class Client {
     }
 
     private updateConnectionState(connectionStatus: ConnectionStatus): void {
-        if (connectionStatus !== this.connectionStatus 
+        if (connectionStatus !== this.connectionStatus
             && connectionStatus === ConnectionStatus.ESTABLISHED) {
             this.isNoConnectionEstablishedErrorLogged = true;
         }
@@ -376,7 +384,8 @@ export class Client {
     async checkProjectConfigurationRequest(
         projectName: string,
         projectPath: string,
-        buildDirRelativePath: string,
+        buildDirRelPath: string,
+        itfRelPath: string,
         cmakeOptions: Array<string>,
         configMode: ConfigMode,
         progressKey: utbotUI.ProgressKey,
@@ -386,7 +395,9 @@ export class Client {
             const projectContext = new ProjectContext();
             projectContext.setProjectname(projectName);
             projectContext.setProjectpath(projectPath);
-            projectContext.setBuilddirrelativepath(buildDirRelativePath);
+            projectContext.setClientprojectpath(vsUtils.getProjectDirByOpenedFile().fsPath);
+            projectContext.setBuilddirrelpath(buildDirRelPath);
+            projectContext.setItfrelpath(itfRelPath);
             const projectConfigRequest = new ProjectConfigRequest();
             projectConfigRequest.setProjectcontext(projectContext);
             projectConfigRequest.setConfigmode(configMode);
@@ -417,8 +428,11 @@ export class Client {
             const projectContext = new ProjectContext();
             projectContext.setProjectname(Prefs.getProjectName());
             projectContext.setProjectpath(buildDir[0]);
-            projectContext.setTestdirpath(Prefs.getTestsDirPath());
-            projectContext.setBuilddirrelativepath(buildDir[1]);
+            projectContext.setClientprojectpath(vsUtils.getProjectDirByOpenedFile().fsPath);
+            projectContext.setTestdirrelpath(Prefs.getTestDirRelativePath());
+            projectContext.setReportdirrelpath(Prefs.getReportDirRelativePath());
+            projectContext.setBuilddirrelpath(buildDir[1]);
+            projectContext.setItfrelpath(Prefs.getItfRelPath());
             rpcRequest.setProjectcontext(projectContext);
             rpcRequest.setSettingscontext(Prefs.getSettingsContext());
 
@@ -432,7 +446,7 @@ export class Client {
     }
 
     async requestFunctionTests(
-        params: RequestTestsParams, 
+        params: RequestTestsParams,
         lineInfo: [string, number],
         responseHandler: ResponseHandler<TestsResponse>): Promise<TestsResponse> {
         logger.info(
@@ -498,7 +512,7 @@ export class Client {
     }
 
     async requestFileTests(
-        params: RequestTestsParams, 
+        params: RequestTestsParams,
         filePath: string,
         responseHandler: ResponseHandler<TestsResponse>): Promise<TestsResponse> {
         logger.info(`Sending file tests request, filepath: ${filePath}`);
@@ -600,7 +614,7 @@ export class Client {
             `Sending project tests request \n` +
             `projectName: ${params.projectName}\n` +
             `projectPath: ${params.projectPath}\n` +
-            `buildDirRelativePath: ${params.buildDirRelativePath}\n` + 
+            `buildDirRelPath: ${params.buildDirRelPath}\n` +
             `targetPath: ${params.targetPath}`
         );
 
@@ -631,8 +645,10 @@ export class Client {
             const projectContext = new ProjectContext();
             projectContext.setProjectname(Prefs.getProjectName());
             projectContext.setProjectpath(params.projectPath);
-            projectContext.setTestdirpath(Prefs.getTestsDirPath());
-            projectContext.setBuilddirrelativepath(params.buildDirRelativePath);
+            projectContext.setClientprojectpath(vsUtils.getProjectDirByOpenedFile().fsPath);
+            projectContext.setTestdirrelpath(Prefs.getTestDirRelativePath());
+            projectContext.setReportdirrelpath(Prefs.getReportDirRelativePath());
+            projectContext.setBuilddirrelpath(params.buildDirRelPath);
             rpcRequest.setProjectcontext(projectContext);
             rpcRequest.setSettingscontext(Prefs.getSettingsContext());
             rpcRequest.setCoverage(true);
@@ -765,8 +781,10 @@ export class Client {
         }, this.DEFAULT_TIMEOUT);
         serverResponse.on('data', async responseAny => {
             const response = responseAny as T;
+            const logEntry = response as LogEntry;
             started.value = true;
             await this.handleResponse(response, progressKey, resolve, responseHandler);
+            utbotUI.channels().outputServerLogChannel.append(logEntry.toString());
         })
             .on('error', (err) => {
                 started.value = true;
